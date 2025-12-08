@@ -1,158 +1,564 @@
-import React, { useState, useRef, useEffect } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions } from "react-native";
-import { Ionicons, Entypo, FontAwesome5 } from "@expo/vector-icons";
+// screens/TranscriptionScreen.js
+import React, { useEffect, useState, useRef } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ScrollView,
+  Alert,
+  Animated,
+  Dimensions,
+} from "react-native";
+import { Ionicons, Entypo } from "@expo/vector-icons";
+import { Audio } from "expo-av";
+import * as Speech from "expo-speech";
+import { useTheme } from "../ThemeContext";
+import {
+  loadTranscriptionSettings,
+  loadTranscriptionHistory,
+  addTranscriptionToHistory,
+} from "../transcriptionConfig";
 
 const SCREEN_HEIGHT = Dimensions.get("window").height;
 
 export default function TranscriptionScreen({ navigation }) {
-  const [expanded, setExpanded] = useState(false);
-  const [micState, setMicState] = useState("idle"); // idle | playing | paused
-  const micAnim = useRef(new Animated.Value(0)).current;
+  const { theme } = useTheme();
 
-  const animation = useRef(new Animated.Value(0)).current; // bottom card animation
+  const [status, setStatus] = useState("ready"); // "ready" | "recording" | "processing"
+  const [recording, setRecording] = useState(null);
+  const [currentText, setCurrentText] = useState("");
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [settings, setSettings] = useState(null);
 
-  const toggleBottomBar = () => {
-    Animated.timing(animation, {
-      toValue: expanded ? 0 : 1,
-      duration: 300,
-      useNativeDriver: false,
-    }).start(() => setExpanded(!expanded));
+  const recordingRef = useRef(null);
+  const historyAnim = useRef(new Animated.Value(0)).current; // 0 = collapsed, 1 = expanded
+
+  useEffect(() => {
+    const init = async () => {
+      const setts = await loadTranscriptionSettings();
+      setSettings(setts);
+      const hist = await loadTranscriptionHistory();
+      setHistory(hist);
+    };
+    init();
+  }, []);
+
+  // ---- RECORDING ----
+
+  const startRecording = async () => {
+    try {
+      const perm = await Audio.requestPermissionsAsync();
+      if (perm.status !== "granted") {
+        Alert.alert("Permission needed", "Microphone access is required.");
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      recordingRef.current = recording;
+      setRecording(recording);
+      setStatus("recording");
+    } catch (e) {
+      console.log("startRecording error:", e);
+      Alert.alert("Error", "Could not start recording.");
+    }
   };
 
-  // Animate mic glow based on state
-  useEffect(() => {
-    if (micState === "playing") {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(micAnim, { toValue: 1, duration: 500, useNativeDriver: false }),
-          Animated.timing(micAnim, { toValue: 0, duration: 500, useNativeDriver: false }),
-        ])
-      ).start();
-    } else if (micState === "paused") {
-      Animated.timing(micAnim, { toValue: 0.5, duration: 300, useNativeDriver: false }).start();
-    } else {
-      Animated.timing(micAnim, { toValue: 0, duration: 300, useNativeDriver: false }).start();
+  const pauseRecording = async () => {
+    try {
+      if (recordingRef.current) {
+        await recordingRef.current.pauseAsync();
+        setStatus("ready"); // paused
+      }
+    } catch (e) {
+      console.log("pauseRecording error:", e);
     }
-  }, [micState]);
+  };
 
-  const bottomBarHeight = animation.interpolate({
-    inputRange: [0, 1],
-    outputRange: [80, SCREEN_HEIGHT * 0.6],
-  });
+  const stopRecording = async () => {
+    try {
+      if (!recordingRef.current) return;
+      setStatus("processing");
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      recordingRef.current = null;
+      setRecording(null);
+
+      // FAKE transcription for now
+      await fakeTranscribe(uri);
+    } catch (e) {
+      console.log("stopRecording error:", e);
+      Alert.alert("Error", "Could not stop recording.");
+      setStatus("ready");
+    }
+  };
+
+  // ---- FAKE TRANSCRIPTION (replace with real API later) ----
+
+  const fakeTranscribe = async (uri) => {
+    console.log("audio file at:", uri);
+    // simulate processing delay
+    await new Promise((res) => setTimeout(res, 1500));
+
+    const dummy =
+      "Hi, this is a test, this feature will be completed soon. The purpose of this is to transcribe and then have AI involved in the export part where it will be used to make sense of the notes that was being heard through audio. Thanks for listening to Ameesh waffle about his presentation";
+    setCurrentText(dummy);
+    setStatus("ready");
+
+    const entry = {
+      id: Date.now().toString(),
+      title: "Transcript " + new Date().toLocaleTimeString(),
+      text: dummy,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = await addTranscriptionToHistory(entry);
+    if (updated) setHistory(updated || []);
+  };
+
+  // ---- TTS READING ----
+
+  const speakCurrent = () => {
+    if (!currentText) {
+      Alert.alert("No text", "There is no transcription to read.");
+      return;
+    }
+    Speech.stop();
+    const voiceId = settings?.voice ?? "voiceA";
+
+    let options = {};
+    if (voiceId === "voiceB") {
+      options = { pitch: 1.2, rate: 1.0 };
+    } else if (voiceId === "voiceC") {
+      options = { pitch: 0.9, rate: 0.9 };
+    } else {
+      options = { pitch: 1.0, rate: 1.0 };
+    }
+
+    Speech.speak(currentText, options);
+  };
+
+  // ---- Export stubs ----
+
+  const exportAsPDF = () => {
+    if (!currentText) {
+      Alert.alert("No text", "Nothing to export.");
+      return;
+    }
+    Alert.alert("Export", "PDF export will be implemented later.");
+  };
+
+  const exportAsDOCX = () => {
+    if (!currentText) {
+      Alert.alert("No text", "Nothing to export.");
+      return;
+    }
+    Alert.alert("Export", "Word/DOCX export will be implemented later.");
+  };
+
+  // ---- UI helpers ----
+
+  const statusColor = (key) =>
+    status === key ? theme.colors.primary : theme.colors.mutedText;
+
+  const statusBg = (key) =>
+    status === key ? theme.colors.card : "transparent";
+
+  const handleNew = () => {
+    Speech.stop();
+    setCurrentText("");
+    setStatus("ready");
+  };
+
+  const loadFromHistory = (item) => {
+    Speech.stop();
+    setCurrentText(item.text);
+    setStatus("ready");
+  };
+
+  const toggleHistory = () => {
+    const toValue = showHistory ? 0 : 1;
+    Animated.timing(historyAnim, {
+      toValue,
+      duration: 250,
+      useNativeDriver: false,
+    }).start(() => {
+      setShowHistory(!showHistory);
+    });
+  };
 
   return (
-    <View style={styles.container}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: theme.colors.background },
+      ]}
+    >
       {/* Top bar */}
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtnTop}>
-          <Ionicons name="arrow-back" size={28} color="#fff" />
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={28} color="#111111" />
         </TouchableOpacity>
-        <Text style={styles.header}>TRANSCRIPTIONS</Text>
-        <TouchableOpacity onPress={() => navigation.navigate("Settings")} style={styles.iconBtnTop}>
-          <Entypo name="cog" size={27} color="#fff" />
+        <Text style={{ fontWeight: "bold", fontSize: 18, color: "#111111" }}>
+          TRANSCRIPTIONS
+        </Text>
+        <TouchableOpacity onPress={() => navigation.navigate("Settings")}>
+          <Entypo name="cog" size={28} color="#111111" />
         </TouchableOpacity>
       </View>
 
-      {/* Main content */}
-      <View style={styles.mainContent}>
-        {/* Export buttons */}
-        <View style={styles.exportSection}>
-          <Text style={styles.exportLabel}>EXPORT FORMAT :</Text>
-          <View style={styles.exportRow}>
-            <TouchableOpacity style={styles.exportBtn}><Text style={styles.exportBtnText}>PDF</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.exportBtn}><Text style={styles.exportBtnText}>WORD</Text></TouchableOpacity>
-            <TouchableOpacity style={styles.exportBtn}><Text style={styles.exportBtnText}>FLASH</Text></TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Transcription box */}
-        <View style={styles.transcriptionBox}>
-          <Text style={styles.transcriptionText}>TRANSCRIPTION WILL APPEAR HERE</Text>
-          <View style={styles.statusRow}>
-            <Text style={styles.statusBtn}>READY</Text>
-            <Text style={styles.statusBtn}>RECORDING</Text>
-            <Text style={styles.statusBtn}>PROCESSING</Text>
-          </View>
-        </View>
-
-        {/* Microphone */}
-        <View style={styles.microphoneArea}>
-          <Animated.View
-            style={[
-              styles.microOuterCircle,
-              {
-                shadowColor: "#B1B95C",
-                shadowOpacity: micAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 0.8] }),
-                shadowRadius: micAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 15] }),
-                shadowOffset: { width: 0, height: 0 },
-                borderColor: micAnim.interpolate({ inputRange: [0, 1], outputRange: ["#B1B95C", "#FFFF00"] }),
-              },
-            ]}
+      {/* Status pills */}
+      <View style={styles.statusRow}>
+        <View
+          style={[
+            styles.statusPill,
+            {
+              borderColor: statusColor("recording"),
+              backgroundColor: statusBg("recording"),
+            },
+          ]}
+        >
+          <Text
+            style={{
+              color: statusColor("recording"),
+              fontWeight: "bold",
+              fontSize: 12,
+            }}
           >
-            <View style={styles.microInnerCircle}>
-              <FontAwesome5 name="microphone" size={48} color={micState === "playing" ? "#FFFF00" : "#203728"} />
-            </View>
-          </Animated.View>
+            Recording
+          </Text>
         </View>
+        <View
+          style={[
+            styles.statusPill,
+            {
+              borderColor: statusColor("processing"),
+              backgroundColor: statusBg("processing"),
+            },
+          ]}
+        >
+          <Text
+            style={{
+              color: statusColor("processing"),
+              fontWeight: "bold",
+              fontSize: 12,
+            }}
+          >
+            Processing
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.statusPill,
+            {
+              borderColor: statusColor("ready"),
+              backgroundColor: statusBg("ready"),
+            },
+          ]}
+        >
+          <Text
+            style={{
+              color: statusColor("ready"),
+              fontWeight: "bold",
+              fontSize: 12,
+            }}
+          >
+            Ready
+          </Text>
+        </View>
+      </View>
 
-        {/* Controls */}
-        <View style={styles.controlsContainer}>
-          <TouchableOpacity style={styles.iconBtnCtl} onPress={() => setMicState("playing")}>
-            <Ionicons name="play" size={26} color="#203728" />
-            <Text style={styles.ctlTxt}>PLAY</Text>
+      {/* Big transcription box */}
+      <View
+        style={[
+          styles.transcriptBox,
+          { backgroundColor: theme.colors.card },
+        ]}
+      >
+        <ScrollView>
+          <Text
+            style={{
+              color: theme.colors.text,
+              fontSize: 15,
+              lineHeight: 22,
+            }}
+          >
+            {currentText ||
+              "Your transcription will appear here after you stop recording."}
+          </Text>
+        </ScrollView>
+
+        {/* Actions inside box */}
+        <View style={styles.boxActions}>
+          <TouchableOpacity onPress={speakCurrent}>
+            <Text
+              style={{
+                color: theme.colors.primary,
+                fontWeight: "bold",
+              }}
+            >
+              Play Text
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtnCtl} onPress={() => setMicState("paused")}>
-            <Ionicons name="pause" size={26} color="#203728" />
-            <Text style={styles.ctlTxt}>PAUSE</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtnCtl} onPress={() => setMicState("idle")}>
-            <Ionicons name="stop-circle" size={26} color="#203728" />
-            <Text style={styles.ctlTxt}>STOP/RESET</Text>
+          <TouchableOpacity onPress={handleNew}>
+            <Text
+              style={{
+                color: theme.colors.mutedText,
+                fontWeight: "bold",
+              }}
+            >
+              New
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Bottom Card */}
-      <Animated.View style={[styles.bottomBar, { height: bottomBarHeight }]}>
-        <TouchableOpacity style={styles.bottomBarContent} onPress={toggleBottomBar}>
-          <Text style={styles.leftTxt}>00:14</Text>
-          <Text style={styles.rightTxt}>{expanded ? "Swipe down to collapse" : "Swipe up for history"}</Text>
+      {/* Record controls */}
+      <View style={styles.controlsRow}>
+        <TouchableOpacity
+          style={[
+            styles.iconBtn,
+            { backgroundColor: theme.colors.card },
+          ]}
+          onPress={startRecording}
+        >
+          <Ionicons name="mic" size={30} color={theme.colors.primary} />
+          <Text style={[styles.ctlTxt, { color: theme.colors.primary }]}>
+            PLAY
+          </Text>
         </TouchableOpacity>
-        {expanded && (
-          <View style={styles.historyContent}>
-            <Text style={styles.historyText}>History of Transcriptions will appear here</Text>
-          </View>
-        )}
+        <TouchableOpacity
+          style={[
+            styles.iconBtn,
+            { backgroundColor: theme.colors.card },
+          ]}
+          onPress={pauseRecording}
+        >
+          <Ionicons name="pause" size={30} color={theme.colors.primary} />
+          <Text style={[styles.ctlTxt, { color: theme.colors.primary }]}>
+            PAUSE
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.iconBtn,
+            { backgroundColor: theme.colors.card },
+          ]}
+          onPress={stopRecording}
+        >
+          <Ionicons name="stop" size={30} color={theme.colors.primary} />
+          <Text style={[styles.ctlTxt, { color: theme.colors.primary }]}>
+            STOP
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Export buttons */}
+      <View style={styles.exportRow}>
+        <TouchableOpacity
+          style={[
+            styles.exportBtn,
+            { backgroundColor: theme.colors.card },
+          ]}
+          onPress={exportAsPDF}
+        >
+          <Text
+            style={{ color: theme.colors.primary, fontWeight: "bold" }}
+          >
+            Export PDF
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.exportBtn,
+            { backgroundColor: theme.colors.card },
+          ]}
+          onPress={exportAsDOCX}
+        >
+          <Text
+            style={{ color: theme.colors.primary, fontWeight: "bold" }}
+          >
+            Export Word
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Bottom history handle */}
+      <TouchableOpacity
+        style={[
+          styles.bottomBar,
+          { backgroundColor: theme.colors.primary },
+        ]}
+        onPress={toggleHistory}
+      >
+        <Text
+          style={[
+            styles.bottomBarTxt,
+            { color: theme.colors.primaryText },
+          ]}
+        >
+          {showHistory ? "Tap to collapse history" : "Tap to view history"}
+        </Text>
+      </TouchableOpacity>
+
+      {/* Animated history panel */}
+      <Animated.View
+        style={[
+          styles.historyPanel,
+          {
+            backgroundColor: theme.colors.card,
+            height: historyAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, SCREEN_HEIGHT * 0.3],
+            }),
+            opacity: historyAnim,
+            paddingVertical: historyAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0, 10],
+            }),
+          },
+        ]}
+      >
+        <ScrollView>
+          {history.length === 0 ? (
+            <Text
+              style={{
+                color: theme.colors.mutedText,
+                fontSize: 13,
+              }}
+            >
+              No previous transcriptions yet.
+            </Text>
+          ) : (
+            history.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.historyItem}
+                onPress={() => loadFromHistory(item)}
+              >
+                <Text
+                  style={{
+                    color: theme.colors.text,
+                    fontWeight: "bold",
+                  }}
+                >
+                  {item.title}
+                </Text>
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    color: theme.colors.mutedText,
+                    fontSize: 12,
+                    marginTop: 2,
+                  }}
+                >
+                  {item.text}
+                </Text>
+              </TouchableOpacity>
+            ))
+          )}
+        </ScrollView>
       </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#1c3122" },
-  topBar: { flexDirection: "row", alignItems: "center", paddingHorizontal: 30, width: "100%", justifyContent: "space-between", height: 55, marginTop: 14 },
-  iconBtnTop: { padding: 2 },
-  header: { color: "#fff", fontWeight: "bold", fontSize: 18, letterSpacing: 1.5, textAlign: "center", flex: 1 },
-  mainContent: { flex: 1, justifyContent: "space-between", alignItems: "center", width: "100%", paddingTop: 5, paddingBottom: 12 },
-  exportSection: { alignItems: "flex-start", width: "88%", marginBottom: 14 },
-  exportLabel: { color: "#c9d4ab", fontWeight: "bold", fontSize: 13, marginLeft: 5, marginBottom: 6 },
-  exportRow: { flexDirection: "row", marginTop: 2 },
-  exportBtn: { backgroundColor: "#B1B95C", borderRadius: 18, paddingVertical: 7, paddingHorizontal: 22, marginHorizontal: 8, elevation: 2 },
-  exportBtnText: { fontWeight: "bold", color: "#203728", fontSize: 15 },
-  transcriptionBox: { backgroundColor: "#b1b95c", borderRadius: 24, paddingVertical: 30, paddingHorizontal: 22, alignItems: "center", width: "82%", elevation: 2 },
-  transcriptionText: { color: "#203728", fontWeight: "bold", fontSize: 15, marginBottom: 230, textAlign: "top" },
-  statusRow: { flexDirection: "row", justifyContent: "center", width: "100%" },
-  statusBtn: { backgroundColor: "#e4e9d4", borderRadius: 12, paddingHorizontal: 13, paddingVertical: 5, marginHorizontal: 5, fontWeight: "bold", fontSize: 12, color: "#203728", elevation: 2 },
-  microphoneArea: { alignItems: "center", justifyContent: "center", marginVertical: 16, width: "100%" },
-  microOuterCircle: { width: 200, height: 200, borderRadius: 100, borderWidth: 3, justifyContent: "center", alignItems: "center", backgroundColor: "#203728" },
-  microInnerCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: "#B1B95C", justifyContent: "center", alignItems: "center", elevation: 2 },
-  controlsContainer: { flexDirection: "row", justifyContent: "center", width: "100%", marginBottom: 24, marginTop: 10, gap: 12 },
-  iconBtnCtl: { backgroundColor: "#B1B95C", borderRadius: 17, width: 66, height: 66, justifyContent: "center", alignItems: "center", elevation: 2 },
-  ctlTxt: { color: "#203728", fontWeight: "bold", fontSize: 12, marginTop: 6, textAlign: "center" },
-  bottomBar: { backgroundColor: "#B1B95C", width: "100%", borderTopLeftRadius: 20, borderTopRightRadius: 20, elevation: 4, overflow: "hidden" },
-  bottomBarContent: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 26, paddingVertical: 18 },
-  leftTxt: { color: "#203728", fontWeight: "bold", fontSize: 16 },
-  rightTxt: { color: "#203728", fontWeight: "bold", fontSize: 16 },
-  historyContent: { paddingHorizontal: 26, paddingVertical: 20 },
-  historyText: { color: "#203728", fontSize: 15 },
+  container: { flex: 1 },
+  topBar: {
+    width: "90%",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: "12%",
+    marginBottom: 20,
+    alignSelf: "center",
+    alignItems: "center",
+  },
+  statusRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  statusPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginHorizontal: 4,
+  },
+  transcriptBox: {
+    flex: 1,
+    marginHorizontal: 20,
+    borderRadius: 18,
+    padding: 14,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    marginBottom: 10,
+  },
+  boxActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 10,
+  },
+  controlsRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginBottom: 10,
+  },
+  iconBtn: {
+    borderRadius: 20,
+    marginHorizontal: 10,
+    width: 80,
+    height: 80,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  ctlTxt: { marginTop: 6, fontWeight: "bold", fontSize: 12 },
+  exportRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  exportBtn: {
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    marginHorizontal: 8,
+  },
+  bottomBar: {
+    width: "100%",
+    height: "13%",
+    paddingVertical: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    marginBottom: 0,
+  },
+  bottomBarTxt: { fontWeight: "bold", fontSize: 14 },
+historyPanel: {
+  position: "absolute",
+  bottom: 60 + 48,         // 48 was your old offset; adjust if needed
+  left: 0,
+  right: 0,
+  paddingHorizontal: 20,
+  borderTopLeftRadius: 16,
+  borderTopRightRadius: 16,
+  overflow: "hidden",
+}
+,
+  historyItem: {
+    paddingVertical: 20,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#ccc",
+  },
 });
