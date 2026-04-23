@@ -1,7 +1,5 @@
 // theme.js
 
-// NOTE: replace these font names with the actual loaded font family names.
-// If you have not loaded custom fonts yet, you can temporarily use "System".
 const FONTS = {
   icy: {
     regular: "Inter_400Regular",
@@ -53,15 +51,20 @@ const FONTS = {
     medium: "System",
     bold: "System",
   },
+  phantomPurple: {
+    regular: "System",
+    medium: "System",
+    bold: "System",
+  },
 };
 
 export const THEMES = {
   icy: {
     name: "Icy Blue",
     colors: {
-      background: "#BAD9EB",      // Icy Blue Mist
+      background: "#BAD9EB",
       card: "#FFFFFF",
-      primary: "#00693E",         // Forest Emerald
+      primary: "#00693E",
       primaryText: "#FFFFFF",
       text: "#103040",
       mutedText: "#4F6B7A",
@@ -74,9 +77,9 @@ export const THEMES = {
   peach: {
     name: "Peach Cream",
     colors: {
-      background: "#F8E6D2",      // Peach Cream
+      background: "#F8E6D2",
       card: "#FFFFFF",
-      primary: "#90222B",         // Burgundy Red
+      primary: "#90222B",
       primaryText: "#F8E6D2",
       text: "#4B1416",
       mutedText: "#8C4A40",
@@ -89,7 +92,6 @@ export const THEMES = {
   lavender: {
     name: "Lavender",
     colors: {
-      // Lavender White / Lavender Violet
       background: "#F7F7FF",
       card: "#FFFFFF",
       primary: "#9967CA",
@@ -105,7 +107,6 @@ export const THEMES = {
   pastelGreen: {
     name: "Pastel Green",
     colors: {
-      // Pastel Green / Moss Green
       background: "#B4D3B3",
       card: "#FFFFFF",
       primary: "#595E35",
@@ -121,7 +122,6 @@ export const THEMES = {
   paleHoney: {
     name: "Pale Honey",
     colors: {
-      // Pale Honey / Mahogany
       background: "#ECCE90",
       card: "#FFFFFF",
       primary: "#5C2221",
@@ -207,5 +207,22 @@ export const THEMES = {
       danger: "#F97316",
     },
     fontFamily: FONTS.charcoalGold,
+  },
+
+  // ── NEW: Phantom Purple ─────────────────────────────────────────────────────
+  // The dark purple design from the screenshot — deep blacks, vivid purple accent
+  phantomPurple: {
+    name: "Phantom Purple",
+    colors: {
+      background:      "#12121A",   // near-black base
+      card:            "#1C1C28",   // dark card surface
+      primary:         "#7C3AED",   // vivid purple accent
+      primaryText:     "#FFFFFF",   // white text on purple
+      text:            "#FFFFFF",   // main body text
+      mutedText:       "#8888AA",   // subdued labels / placeholders
+      inputBackground: "#1C1C28",   // input fields match card
+      danger:          "#FF3B3B",   // red for delete / errors
+    },
+    fontFamily: FONTS.phantomPurple,
   },
 };

@@ -1,564 +1,477 @@
 // screens/TranscriptionScreen.js
-import React, { useEffect, useState, useRef } from "react";
+// Features: Groq Whisper + PDF + Word + AI Tutor + Notes + Flashcards + Quiz + Delete
+
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Alert,
-  Animated,
-  Dimensions,
+  View, Text, TouchableOpacity, StyleSheet,
+  ScrollView, Alert, Animated, Easing, ActivityIndicator,
 } from "react-native";
-import { Ionicons, Entypo } from "@expo/vector-icons";
+import { Ionicons, FontAwesome5, MaterialIcons, Feather, Entypo } from "@expo/vector-icons";
 import { Audio } from "expo-av";
 import * as Speech from "expo-speech";
+import * as Print from "expo-print";
+import * as Sharing from "expo-sharing";
+import * as FileSystem from "expo-file-system";
+import { useFocusEffect } from "@react-navigation/native";
 import { useTheme } from "../ThemeContext";
 import {
-  loadTranscriptionSettings,
   loadTranscriptionHistory,
   addTranscriptionToHistory,
+  deleteTranscriptionFromHistory,
+  clearTranscriptionHistory,
 } from "../transcriptionConfig";
+import { createNote } from "../notesConfig";
 
-const SCREEN_HEIGHT = Dimensions.get("window").height;
+const GROQ_API_KEY = "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"; // 🔑 replace with your key
+const GROQ_WHISPER_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
+
+// ── Pulse ring ────────────────────────────────────────────────────────────────
+function PulseRing({ color }) {
+  const ring1 = useRef(new Animated.Value(0)).current;
+  const ring2 = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const pulse = (val, delay) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(val, { toValue: 1, duration: 1400, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+          Animated.timing(val, { toValue: 0, duration: 0, useNativeDriver: true }),
+        ])
+      );
+    const anim = Animated.parallel([pulse(ring1, 0), pulse(ring2, 700)]);
+    anim.start();
+    return () => anim.stop();
+  }, []);
+
+  const ringStyle = (val) => ({
+    position: "absolute", width: 110, height: 110, borderRadius: 55,
+    borderWidth: 2, borderColor: color,
+    opacity: val.interpolate({ inputRange: [0, 1], outputRange: [0.7, 0] }),
+    transform: [{ scale: val.interpolate({ inputRange: [0, 1], outputRange: [1, 2.5] }) }],
+  });
+
+  return (
+    <>
+      <Animated.View style={ringStyle(ring1)} />
+      <Animated.View style={ringStyle(ring2)} />
+    </>
+  );
+}
 
 export default function TranscriptionScreen({ navigation }) {
   const { theme } = useTheme();
 
-  const [status, setStatus] = useState("ready"); // "ready" | "recording" | "processing"
-  const [recording, setRecording] = useState(null);
-  const [currentText, setCurrentText] = useState("");
-  const [history, setHistory] = useState([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [settings, setSettings] = useState(null);
-
-  const recordingRef = useRef(null);
-  const historyAnim = useRef(new Animated.Value(0)).current; // 0 = collapsed, 1 = expanded
-
-  useEffect(() => {
-    const init = async () => {
-      const setts = await loadTranscriptionSettings();
-      setSettings(setts);
-      const hist = await loadTranscriptionHistory();
-      setHistory(hist);
-    };
-    init();
-  }, []);
-
-  // ---- RECORDING ----
-
-  const startRecording = async () => {
-    try {
-      const perm = await Audio.requestPermissionsAsync();
-      if (perm.status !== "granted") {
-        Alert.alert("Permission needed", "Microphone access is required.");
-        return;
-      }
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      recordingRef.current = recording;
-      setRecording(recording);
-      setStatus("recording");
-    } catch (e) {
-      console.log("startRecording error:", e);
-      Alert.alert("Error", "Could not start recording.");
-    }
+  const C = {
+    bg:          theme.colors.background,
+    card:        theme.colors.card,
+    primary:     theme.colors.primary,
+    primaryText: theme.colors.primaryText,
+    text:        theme.colors.text,
+    muted:       theme.colors.mutedText,
+    input:       theme.colors.inputBackground,
+    danger:      theme.colors.danger,
   };
 
-  const pauseRecording = async () => {
+  const [isRecording, setIsRecording]   = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [elapsed, setElapsed]           = useState(0);
+  const [history, setHistory]           = useState([]);
+  const [activeItem, setActiveItem]     = useState(null);
+
+  const recordingRef   = useRef(null);
+  const timerRef       = useRef(null);
+  const processingAnim = useRef(new Animated.Value(0)).current;
+
+  useFocusEffect(
+    useCallback(() => {
+      loadTranscriptionHistory().then(setHistory);
+    }, [])
+  );
+
+  useEffect(() => {
+    return () => {
+      if (recordingRef.current) recordingRef.current.stopAndUnloadAsync().catch(() => {});
+      clearInterval(timerRef.current);
+      Speech.stop();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isProcessing) {
+      Animated.loop(
+        Animated.timing(processingAnim, { toValue: 1, duration: 900, easing: Easing.linear, useNativeDriver: true })
+      ).start();
+    } else {
+      processingAnim.setValue(0);
+    }
+  }, [isProcessing]);
+
+  const spinStyle = {
+    transform: [{ rotate: processingAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] }) }],
+  };
+
+  useEffect(() => {
+    if (isRecording) {
+      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+    } else {
+      clearInterval(timerRef.current);
+      if (!isProcessing) setElapsed(0);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [isRecording]);
+
+  const formatTime = (s) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+  // ── Recording ──────────────────────────────────────────────────────────────
+  const startRecording = async () => {
     try {
       if (recordingRef.current) {
-        await recordingRef.current.pauseAsync();
-        setStatus("ready"); // paused
+        try { await recordingRef.current.stopAndUnloadAsync(); } catch (_) {}
+        recordingRef.current = null;
       }
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== "granted") { Alert.alert("Permission needed", "Microphone access is required."); return; }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      recordingRef.current = recording;
+      setIsRecording(true);
+      setElapsed(0);
     } catch (e) {
-      console.log("pauseRecording error:", e);
+      Alert.alert("Error", "Could not start recording.");
     }
   };
 
   const stopRecording = async () => {
     try {
       if (!recordingRef.current) return;
-      setStatus("processing");
+      setIsRecording(false);
+      setIsProcessing(true);
       await recordingRef.current.stopAndUnloadAsync();
       const uri = recordingRef.current.getURI();
       recordingRef.current = null;
-      setRecording(null);
-
-      // FAKE transcription for now
-      await fakeTranscribe(uri);
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      await transcribeWithGroq(uri);
     } catch (e) {
-      console.log("stopRecording error:", e);
       Alert.alert("Error", "Could not stop recording.");
-      setStatus("ready");
+      setIsProcessing(false);
     }
   };
 
-  // ---- FAKE TRANSCRIPTION (replace with real API later) ----
-
-  const fakeTranscribe = async (uri) => {
-    console.log("audio file at:", uri);
-    // simulate processing delay
-    await new Promise((res) => setTimeout(res, 1500));
-
-    const dummy =
-      "Hi, this is a test, this feature will be completed soon. The purpose of this is to transcribe and then have AI involved in the export part where it will be used to make sense of the notes that was being heard through audio. Thanks for listening to Ameesh waffle about his presentation";
-    setCurrentText(dummy);
-    setStatus("ready");
-
-    const entry = {
-      id: Date.now().toString(),
-      title: "Transcript " + new Date().toLocaleTimeString(),
-      text: dummy,
-      createdAt: new Date().toISOString(),
-    };
-    const updated = await addTranscriptionToHistory(entry);
-    if (updated) setHistory(updated || []);
+  const handleMicPress = () => {
+    if (isProcessing) return;
+    if (isRecording) stopRecording();
+    else startRecording();
   };
 
-  // ---- TTS READING ----
+  // ── Groq Whisper ───────────────────────────────────────────────────────────
+  const transcribeWithGroq = async (uri) => {
+    try {
+      const formData = new FormData();
+      formData.append("file", { uri, name: "recording.m4a", type: "audio/m4a" });
+      formData.append("model", "whisper-large-v3-turbo");
+      formData.append("response_format", "text");
 
-  const speakCurrent = () => {
-    if (!currentText) {
-      Alert.alert("No text", "There is no transcription to read.");
-      return;
+      const response = await fetch(GROQ_WHISPER_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
+        body: formData,
+      });
+
+      if (!response.ok) throw new Error(`Groq error: ${response.status}`);
+
+      const transcript = (await response.text()).trim();
+      if (!transcript) { Alert.alert("No speech detected", "Try speaking closer to the mic."); setIsProcessing(false); return; }
+
+      const title = "Transcript · " + new Date().toLocaleTimeString();
+      const entry = { id: Date.now().toString(), title, text: transcript, createdAt: new Date().toISOString() };
+      const updated = await addTranscriptionToHistory(entry);
+      if (updated) setHistory(updated);
+      setActiveItem(entry);
+      setIsProcessing(false);
+    } catch (e) {
+      console.error("Groq transcription error:", e);
+      Alert.alert("Transcription failed", "Check your Groq API key and connection.");
+      setIsProcessing(false);
     }
-    Speech.stop();
-    const voiceId = settings?.voice ?? "voiceA";
-
-    let options = {};
-    if (voiceId === "voiceB") {
-      options = { pitch: 1.2, rate: 1.0 };
-    } else if (voiceId === "voiceC") {
-      options = { pitch: 0.9, rate: 0.9 };
-    } else {
-      options = { pitch: 1.0, rate: 1.0 };
-    }
-
-    Speech.speak(currentText, options);
   };
 
-  // ---- Export stubs ----
-
-  const exportAsPDF = () => {
-    if (!currentText) {
-      Alert.alert("No text", "Nothing to export.");
-      return;
-    }
-    Alert.alert("Export", "PDF export will be implemented later.");
+  // ── Delete ─────────────────────────────────────────────────────────────────
+  const handleDeleteOne = (id, title) => {
+    Alert.alert("Delete Transcription", `Delete "${title}"?`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete", style: "destructive",
+        onPress: async () => {
+          const updated = await deleteTranscriptionFromHistory(id);
+          if (updated !== null) { setHistory(updated); if (activeItem?.id === id) setActiveItem(null); }
+        },
+      },
+    ]);
   };
 
-  const exportAsDOCX = () => {
-    if (!currentText) {
-      Alert.alert("No text", "Nothing to export.");
-      return;
-    }
-    Alert.alert("Export", "Word/DOCX export will be implemented later.");
+  const handleClearAll = () => {
+    if (history.length === 0) return;
+    Alert.alert("Clear All", "Delete all transcriptions? This cannot be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Clear All", style: "destructive",
+        onPress: async () => {
+          const updated = await clearTranscriptionHistory();
+          if (updated !== null) { setHistory(updated); setActiveItem(null); }
+        },
+      },
+    ]);
   };
 
-  // ---- UI helpers ----
-
-  const statusColor = (key) =>
-    status === key ? theme.colors.primary : theme.colors.mutedText;
-
-  const statusBg = (key) =>
-    status === key ? theme.colors.card : "transparent";
-
-  const handleNew = () => {
-    Speech.stop();
-    setCurrentText("");
-    setStatus("ready");
+  // ── Export PDF ─────────────────────────────────────────────────────────────
+  const exportAsPDF = async (item) => {
+    try {
+      const html = `<html><head><meta charset="utf-8"/>
+        <style>body{font-family:Arial,sans-serif;padding:40px;color:#111;line-height:1.7;}
+        h1{font-size:22px;color:#333;border-bottom:2px solid #7C3AED;padding-bottom:10px;}
+        .meta{font-size:12px;color:#888;margin-top:6px;}
+        p{font-size:15px;margin-top:20px;white-space:pre-wrap;}</style></head>
+        <body><h1>${item.title}</h1>
+        <div class="meta">Shepard Learn · ${new Date().toLocaleString()}</div>
+        <p>${item.text}</p></body></html>`;
+      const { uri } = await Print.printToFileAsync({ html });
+      await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: "Save your transcript PDF" });
+    } catch (e) { Alert.alert("Export failed", "Could not generate PDF."); }
   };
 
-  const loadFromHistory = (item) => {
-    Speech.stop();
-    setCurrentText(item.text);
-    setStatus("ready");
+  // ── Export Word ────────────────────────────────────────────────────────────
+  const exportAsDOCX = async (item) => {
+    try {
+      const wordHtml = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+        <head><meta charset="utf-8"/><title>${item.title}</title></head>
+        <body style="font-family:Calibri,sans-serif;font-size:12pt;line-height:1.6;padding:40px;">
+        <h1 style="font-size:18pt;color:#333;">${item.title}</h1>
+        <p style="font-size:10pt;color:#888;">Shepard Learn · ${new Date().toLocaleString()}</p>
+        <hr/><p style="white-space:pre-wrap;font-size:12pt;">${item.text}</p>
+        </body></html>`;
+      const fileUri = `${FileSystem.documentDirectory}transcript_${Date.now()}.doc`;
+      await FileSystem.writeAsStringAsync(fileUri, wordHtml, { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(fileUri, { mimeType: "application/msword", dialogTitle: "Save your transcript Word doc" });
+    } catch (e) { Alert.alert("Export failed", "Could not generate Word document."); }
   };
 
-  const toggleHistory = () => {
-    const toValue = showHistory ? 0 : 1;
-    Animated.timing(historyAnim, {
-      toValue,
-      duration: 250,
-      useNativeDriver: false,
-    }).start(() => {
-      setShowHistory(!showHistory);
-    });
+  // ── Open AI Tutor ──────────────────────────────────────────────────────────
+  const openAITutor = (item) => {
+    navigation.navigate("AITutor", { transcriptionText: item.text, transcriptionTitle: item.title });
   };
+
+  // ── Save to Notes ──────────────────────────────────────────────────────────
+  const saveToNotes = (item) => {
+    const note = createNote(item.title, item.text);
+    navigation.navigate("NoteEditor", { note, isNew: true });
+  };
+
+  // ── Open Quiz ──────────────────────────────────────────────────────────────
+  const openQuiz = (item) => {
+    navigation.navigate("Quiz", { text: item.text, title: item.title });
+  };
+
+  // ── Open Flashcards ────────────────────────────────────────────────────────
+  const openFlashcards = (item) => {
+    navigation.navigate("Flashcards", { text: item.text, title: item.title });
+  };
+
+  const micLabel = isProcessing ? "Processing..." : isRecording ? `Recording  ${formatTime(elapsed)}` : "Tap to record";
 
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: theme.colors.background },
-      ]}
-    >
-      {/* Top bar */}
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={28} color="#111111" />
+    <View style={[s.container, { backgroundColor: C.bg }]}>
+
+      {/* ── Top Bar ──────────────────────────────────────────────────────── */}
+      <View style={s.topBar}>
+        <TouchableOpacity onPress={() => navigation.navigate("Home")}>
+          <Ionicons name="arrow-back" size={28} color={C.text} />
         </TouchableOpacity>
-        <Text style={{ fontWeight: "bold", fontSize: 18, color: "#111111" }}>
-          TRANSCRIPTIONS
-        </Text>
+        <Text style={[s.topBarTitle, { color: C.text }]}>TRANSCRIPTION</Text>
         <TouchableOpacity onPress={() => navigation.navigate("Settings")}>
-          <Entypo name="cog" size={28} color="#111111" />
+          <Entypo name="cog" size={30} color={C.text} />
         </TouchableOpacity>
       </View>
 
-      {/* Status pills */}
-      <View style={styles.statusRow}>
-        <View
-          style={[
-            styles.statusPill,
-            {
-              borderColor: statusColor("recording"),
-              backgroundColor: statusBg("recording"),
-            },
-          ]}
-        >
-          <Text
-            style={{
-              color: statusColor("recording"),
-              fontWeight: "bold",
-              fontSize: 12,
-            }}
-          >
-            Recording
-          </Text>
-        </View>
-        <View
-          style={[
-            styles.statusPill,
-            {
-              borderColor: statusColor("processing"),
-              backgroundColor: statusBg("processing"),
-            },
-          ]}
-        >
-          <Text
-            style={{
-              color: statusColor("processing"),
-              fontWeight: "bold",
-              fontSize: 12,
-            }}
-          >
-            Processing
-          </Text>
-        </View>
-        <View
-          style={[
-            styles.statusPill,
-            {
-              borderColor: statusColor("ready"),
-              backgroundColor: statusBg("ready"),
-            },
-          ]}
-        >
-          <Text
-            style={{
-              color: statusColor("ready"),
-              fontWeight: "bold",
-              fontSize: 12,
-            }}
-          >
-            Ready
-          </Text>
-        </View>
-      </View>
-
-      {/* Big transcription box */}
-      <View
-        style={[
-          styles.transcriptBox,
-          { backgroundColor: theme.colors.card },
-        ]}
-      >
-        <ScrollView>
-          <Text
-            style={{
-              color: theme.colors.text,
-              fontSize: 15,
-              lineHeight: 22,
-            }}
-          >
-            {currentText ||
-              "Your transcription will appear here after you stop recording."}
-          </Text>
-        </ScrollView>
-
-        {/* Actions inside box */}
-        <View style={styles.boxActions}>
-          <TouchableOpacity onPress={speakCurrent}>
-            <Text
-              style={{
-                color: theme.colors.primary,
-                fontWeight: "bold",
-              }}
-            >
-              Play Text
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleNew}>
-            <Text
-              style={{
-                color: theme.colors.mutedText,
-                fontWeight: "bold",
-              }}
-            >
-              New
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Record controls */}
-      <View style={styles.controlsRow}>
-        <TouchableOpacity
-          style={[
-            styles.iconBtn,
-            { backgroundColor: theme.colors.card },
-          ]}
-          onPress={startRecording}
-        >
-          <Ionicons name="mic" size={30} color={theme.colors.primary} />
-          <Text style={[styles.ctlTxt, { color: theme.colors.primary }]}>
-            PLAY
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.iconBtn,
-            { backgroundColor: theme.colors.card },
-          ]}
-          onPress={pauseRecording}
-        >
-          <Ionicons name="pause" size={30} color={theme.colors.primary} />
-          <Text style={[styles.ctlTxt, { color: theme.colors.primary }]}>
-            PAUSE
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.iconBtn,
-            { backgroundColor: theme.colors.card },
-          ]}
-          onPress={stopRecording}
-        >
-          <Ionicons name="stop" size={30} color={theme.colors.primary} />
-          <Text style={[styles.ctlTxt, { color: theme.colors.primary }]}>
-            STOP
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Export buttons */}
-      <View style={styles.exportRow}>
-        <TouchableOpacity
-          style={[
-            styles.exportBtn,
-            { backgroundColor: theme.colors.card },
-          ]}
-          onPress={exportAsPDF}
-        >
-          <Text
-            style={{ color: theme.colors.primary, fontWeight: "bold" }}
-          >
-            Export PDF
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.exportBtn,
-            { backgroundColor: theme.colors.card },
-          ]}
-          onPress={exportAsDOCX}
-        >
-          <Text
-            style={{ color: theme.colors.primary, fontWeight: "bold" }}
-          >
-            Export Word
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Bottom history handle */}
-      <TouchableOpacity
-        style={[
-          styles.bottomBar,
-          { backgroundColor: theme.colors.primary },
-        ]}
-        onPress={toggleHistory}
-      >
-        <Text
-          style={[
-            styles.bottomBarTxt,
-            { color: theme.colors.primaryText },
-          ]}
-        >
-          {showHistory ? "Tap to collapse history" : "Tap to view history"}
-        </Text>
-      </TouchableOpacity>
-
-      {/* Animated history panel */}
-      <Animated.View
-        style={[
-          styles.historyPanel,
-          {
-            backgroundColor: theme.colors.card,
-            height: historyAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0, SCREEN_HEIGHT * 0.3],
-            }),
-            opacity: historyAnim,
-            paddingVertical: historyAnim.interpolate({
-              inputRange: [0, 1],
-              outputRange: [0, 10],
-            }),
-          },
-        ]}
-      >
-        <ScrollView>
-          {history.length === 0 ? (
-            <Text
-              style={{
-                color: theme.colors.mutedText,
-                fontSize: 13,
-              }}
-            >
-              No previous transcriptions yet.
-            </Text>
+      {/* ── Mic Card ─────────────────────────────────────────────────────── */}
+      <View style={[s.micCard, { backgroundColor: C.card }]}>
+        <View style={s.micWrap}>
+          {isRecording && (
+            <View style={StyleSheet.absoluteFill} pointerEvents="none">
+              <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+                <PulseRing color={C.primary} />
+              </View>
+            </View>
+          )}
+          {isProcessing ? (
+            <Animated.View style={[s.micBtn, { backgroundColor: C.primary }, spinStyle]}>
+              <ActivityIndicator color={C.primaryText} size="large" />
+            </Animated.View>
           ) : (
-            history.map((item) => (
+            <TouchableOpacity
+              style={[s.micBtn, { backgroundColor: isRecording ? C.danger : C.primary }]}
+              onPress={handleMicPress}
+              activeOpacity={0.85}
+            >
+              <FontAwesome5 name={isRecording ? "stop" : "microphone"} size={38} color={C.primaryText} />
+            </TouchableOpacity>
+          )}
+        </View>
+        <Text style={[s.micLabel, { color: C.muted }]}>{micLabel}</Text>
+      </View>
+
+      {/* ── Section header ───────────────────────────────────────────────── */}
+      <View style={s.sectionRow}>
+        <Text style={[s.sectionTitle, { color: C.text }]}>Recent Transcriptions</Text>
+        {history.length > 0 && (
+          <TouchableOpacity onPress={handleClearAll} style={s.clearAllBtn}>
+            <MaterialIcons name="delete-sweep" size={18} color={C.danger} />
+            <Text style={[s.clearAllTxt, { color: C.danger }]}>Clear All</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* ── Transcription List ────────────────────────────────────────────── */}
+      <ScrollView style={s.list} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+        {history.length === 0 ? (
+          <View style={[s.emptyCard, { backgroundColor: C.card }]}>
+            <FontAwesome5 name="file-alt" size={40} color={C.muted} />
+            <Text style={[s.emptyTxt, { color: C.muted }]}>No transcriptions yet</Text>
+          </View>
+        ) : (
+          history.map((item) => {
+            const isActive = activeItem?.id === item.id;
+            return (
               <TouchableOpacity
                 key={item.id}
-                style={styles.historyItem}
-                onPress={() => loadFromHistory(item)}
+                style={[s.transcriptCard, {
+                  backgroundColor: C.card,
+                  borderColor: isActive ? C.primary : "transparent",
+                  borderWidth: isActive ? 1.5 : 0,
+                }]}
+                onPress={() => setActiveItem(isActive ? null : item)}
+                activeOpacity={0.8}
               >
-                <Text
-                  style={{
-                    color: theme.colors.text,
-                    fontWeight: "bold",
-                  }}
-                >
-                  {item.title}
-                </Text>
-                <Text
-                  numberOfLines={1}
-                  style={{
-                    color: theme.colors.mutedText,
-                    fontSize: 12,
-                    marginTop: 2,
-                  }}
-                >
-                  {item.text}
-                </Text>
+                <View style={s.cardTopRow}>
+                  <View style={[s.cardDot, { backgroundColor: C.primary }]} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={[s.cardTitle, { color: C.text }]}>{item.title}</Text>
+                    <Text numberOfLines={isActive ? undefined : 2} style={[s.cardPreview, { color: C.muted }]}>
+                      {item.text}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => handleDeleteOne(item.id, item.title)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <MaterialIcons name="delete-outline" size={20} color={C.danger} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* ── Expanded action buttons ─────────────────────────── */}
+                {isActive && (
+                  <View style={[s.actionRow, { borderTopColor: C.input }]}>
+
+                    {/* PDF */}
+                    <TouchableOpacity
+                      style={[s.actionBtn, { backgroundColor: `${C.danger}18`, borderColor: `${C.danger}40` }]}
+                      onPress={() => exportAsPDF(item)}
+                    >
+                      <MaterialIcons name="picture-as-pdf" size={14} color={C.danger} />
+                      <Text style={[s.actionTxt, { color: C.danger }]}>PDF</Text>
+                    </TouchableOpacity>
+
+                    {/* Word */}
+                    <TouchableOpacity
+                      style={[s.actionBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}40` }]}
+                      onPress={() => exportAsDOCX(item)}
+                    >
+                      <MaterialIcons name="description" size={14} color={C.primary} />
+                      <Text style={[s.actionTxt, { color: C.primary }]}>Word</Text>
+                    </TouchableOpacity>
+
+                    {/* AI Tutor */}
+                    <TouchableOpacity
+                      style={[s.actionBtn, { backgroundColor: `${C.primary}25`, borderColor: C.primary }]}
+                      onPress={() => openAITutor(item)}
+                    >
+                      <MaterialIcons name="psychology" size={14} color={C.primary} />
+                      <Text style={[s.actionTxt, { color: C.primary, fontWeight: "700" }]}>Tutor</Text>
+                    </TouchableOpacity>
+
+                    {/* Notes */}
+                    <TouchableOpacity
+                      style={[s.actionBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}40` }]}
+                      onPress={() => saveToNotes(item)}
+                    >
+                      <MaterialIcons name="note-add" size={14} color={C.primary} />
+                      <Text style={[s.actionTxt, { color: C.primary }]}>Notes</Text>
+                    </TouchableOpacity>
+
+                    {/* Read aloud */}
+                    <TouchableOpacity
+                      style={[s.actionBtn, { backgroundColor: `${C.primary}18`, borderColor: `${C.primary}40` }]}
+                      onPress={() => { Speech.stop(); Speech.speak(item.text); }}
+                    >
+                      <Feather name="volume-2" size={14} color={C.primary} />
+                      <Text style={[s.actionTxt, { color: C.primary }]}>Read</Text>
+                    </TouchableOpacity>
+
+                  </View>
+                )}
               </TouchableOpacity>
-            ))
-          )}
-        </ScrollView>
-      </Animated.View>
+            );
+          })
+        )}
+      </ScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   container: { flex: 1 },
   topBar: {
-    width: "90%",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: "12%",
-    marginBottom: 20,
-    alignSelf: "center",
-    alignItems: "center",
+    width: "90%", flexDirection: "row", justifyContent: "space-between",
+    alignItems: "center", marginTop: "15%", marginBottom: 24, alignSelf: "center",
   },
-  statusRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-    marginBottom: 10,
+  topBarTitle: { fontWeight: "bold", fontSize: 18 },
+  micCard: {
+    marginHorizontal: 16, borderRadius: 20,
+    paddingVertical: 32, paddingHorizontal: 20,
+    alignItems: "center", marginBottom: 28,
   },
-  statusPill: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginHorizontal: 4,
+  micWrap: { width: 110, height: 110, alignItems: "center", justifyContent: "center", marginBottom: 16 },
+  micBtn: {
+    width: 110, height: 110, borderRadius: 55,
+    justifyContent: "center", alignItems: "center",
+    shadowOpacity: 0.4, shadowRadius: 18, shadowOffset: { width: 0, height: 6 }, elevation: 10,
   },
-  transcriptBox: {
-    flex: 1,
-    marginHorizontal: 20,
-    borderRadius: 18,
-    padding: 14,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 2 },
-    marginBottom: 10,
+  micLabel: { fontSize: 14, fontWeight: "500" },
+  sectionRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    paddingHorizontal: 22, marginBottom: 12,
   },
-  boxActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 10,
+  sectionTitle: { fontSize: 18, fontWeight: "bold" },
+  clearAllBtn:  { flexDirection: "row", alignItems: "center", gap: 4 },
+  clearAllTxt:  { fontSize: 13, fontWeight: "600" },
+  list: { flex: 1, paddingHorizontal: 16 },
+  emptyCard: { borderRadius: 20, paddingVertical: 60, alignItems: "center", gap: 14 },
+  emptyTxt: { fontSize: 15 },
+  transcriptCard: { borderRadius: 16, padding: 16, marginBottom: 10, overflow: "hidden" },
+  cardTopRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  cardDot:    { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
+  cardTitle:   { fontSize: 13, fontWeight: "700", marginBottom: 4 },
+  cardPreview: { fontSize: 13, lineHeight: 19 },
+  actionRow: {
+    flexDirection: "row", gap: 8,
+    marginTop: 14, paddingTop: 12,
+    borderTopWidth: 1, flexWrap: "wrap",
   },
-  controlsRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-    marginBottom: 10,
+  actionBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 10, paddingVertical: 7,
+    borderRadius: 10, borderWidth: 1,
   },
-  iconBtn: {
-    borderRadius: 20,
-    marginHorizontal: 10,
-    width: 80,
-    height: 80,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  ctlTxt: { marginTop: 6, fontWeight: "bold", fontSize: 12 },
-  exportRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-    marginBottom: 8,
-  },
-  exportBtn: {
-    borderRadius: 20,
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    marginHorizontal: 8,
-  },
-  bottomBar: {
-    width: "100%",
-    height: "13%",
-    paddingVertical: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    marginBottom: 0,
-  },
-  bottomBarTxt: { fontWeight: "bold", fontSize: 14 },
-historyPanel: {
-  position: "absolute",
-  bottom: 60 + 48,         // 48 was your old offset; adjust if needed
-  left: 0,
-  right: 0,
-  paddingHorizontal: 20,
-  borderTopLeftRadius: 16,
-  borderTopRightRadius: 16,
-  overflow: "hidden",
-}
-,
-  historyItem: {
-    paddingVertical: 20,
-    borderBottomWidth: 0.5,
-    borderBottomColor: "#ccc",
-  },
+  actionTxt: { fontSize: 12, fontWeight: "600" },
 });

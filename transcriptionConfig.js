@@ -5,7 +5,7 @@ const SETTINGS_KEY = "transcription-settings";
 const HISTORY_KEY = "transcription-history";
 
 const DEFAULT_SETTINGS = {
-  voice: "voiceA", // "voiceA" | "voiceB" | "voiceC"
+  voice: "voiceA",
 };
 
 export async function loadTranscriptionSettings() {
@@ -46,7 +46,6 @@ export async function loadTranscriptionHistory() {
 }
 
 export async function addTranscriptionToHistory(entry) {
-  // entry: { id, title, text, createdAt }
   try {
     const list = await loadTranscriptionHistory();
     const updated = [entry, ...list];
@@ -54,6 +53,30 @@ export async function addTranscriptionToHistory(entry) {
     return updated;
   } catch (e) {
     console.log("addTranscriptionToHistory error:", e);
+    return null;
+  }
+}
+
+// Delete a single transcription by id
+export async function deleteTranscriptionFromHistory(id) {
+  try {
+    const list = await loadTranscriptionHistory();
+    const updated = list.filter((item) => item.id !== id);
+    await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
+    return updated;
+  } catch (e) {
+    console.log("deleteTranscriptionFromHistory error:", e);
+    return null;
+  }
+}
+
+// Delete all transcriptions
+export async function clearTranscriptionHistory() {
+  try {
+    await AsyncStorage.removeItem(HISTORY_KEY);
+    return [];
+  } catch (e) {
+    console.log("clearTranscriptionHistory error:", e);
     return null;
   }
 }

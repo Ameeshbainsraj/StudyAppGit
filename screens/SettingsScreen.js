@@ -1,766 +1,417 @@
 // screens/SettingsScreen.js
 import React, { useState, useEffect } from "react";
-
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  ActivityIndicator,
-  ScrollView,
-  TextInput,
+  View, Text, TouchableOpacity, StyleSheet,
+  Alert, ActivityIndicator, ScrollView, TextInput, Image,
 } from "react-native";
-
-import {
-  loadPomodoroSettings,
-  setWorkMinutes,
-  setShortBreakMinutes,
-  setLongBreakMinutes,
-  setStartSound,
-  setBreakEndSound,
-} from "../PomodoroConfig";
-
-
-import {
-  loadTranscriptionSettings,
-  setVoice,
-} from "../transcriptionConfig";
-
-
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { FIREBASE_AUTH, FIREBASE_DB } from "../FirebaseConfig";
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc, getDoc } from "firebase/firestore";
 import { useTheme } from "../ThemeContext";
+import { THEMES } from "../theme";
+import {
+  loadPomodoroSettings, setWorkMinutes,
+  setShortBreakMinutes, setLongBreakMinutes,
+  setStartSound, setBreakEndSound,
+} from "../PomodoroConfig";
+import { loadTranscriptionSettings, setVoice } from "../transcriptionConfig";
 
 export default function SettingsScreen({ navigation }) {
-  const [saving, setSaving] = useState(false);
-  const [showThemes, setShowThemes] = useState(false);
   const { theme, themeKey, changeTheme } = useTheme();
 
-  const handleLogout = () => {
-    navigation.replace("Login");
+  const C = {
+    bg:      theme.colors.background,
+    card:    theme.colors.card,
+    primary: theme.colors.primary,
+    primaryText: theme.colors.primaryText,
+    text:    theme.colors.text,
+    muted:   theme.colors.mutedText,
+    input:   theme.colors.inputBackground,
+    danger:  theme.colors.danger,
   };
 
-  const pickImage = async (fromCamera = false) => {
-    const permissionResult = fromCamera
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+  const [saving, setSaving]               = useState(false);
+  const [userName, setUserName]           = useState("USERNAME");
+  const [userEmail, setUserEmail]         = useState("");
+  const [profileUri, setProfileUri]       = useState(null);
+  const [pomoSettings, setPomoSettings]   = useState(null);
+  const [transSettings, setTransSettings] = useState(null);
+  const [editingField, setEditingField]   = useState(null);
+  const [tempMinutes, setTempMinutes]     = useState("");
+  const [showThemePicker, setShowThemePicker] = useState(false);
 
-    if (permissionResult.status !== "granted") {
-      Alert.alert("Permission needed", "Allow access to use this feature.");
-      return null;
-    }
-
-    const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-          allowsEditing: true,
-          aspect: [1, 1],
-          quality: 0.8,
-        })
-      : await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
-          allowsEditing: true,
-          aspect: [1, 1],
-          quality: 0.8,
-        });
-
-    if (result.canceled) return null;
-    return result.assets[0].uri;
-  };
+  useEffect(() => {
+    const load = async () => {
+      const user = FIREBASE_AUTH.currentUser;
+      if (user) {
+        setUserEmail(user.email || "");
+        const snap = await getDoc(doc(FIREBASE_DB, "users", user.uid));
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.name) setUserName(data.name);
+          if (data.localProfileUri) setProfileUri(data.localProfileUri);
+        }
+      }
+      const ps = await loadPomodoroSettings();
+      setPomoSettings(ps);
+      const ts = await loadTranscriptionSettings();
+      setTransSettings(ts);
+    };
+    load();
+  }, []);
 
   const pickAndSave = async (fromCamera) => {
     try {
-      const user = FIREBASE_AUTH.currentUser;
-      if (!user) return;
-
-      const uri = await pickImage(fromCamera);
-      if (!uri) return;
+      const perm = fromCamera
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (perm.status !== "granted") {
+        Alert.alert("Permission needed", "Allow access to use this feature.");
+        return;
+      }
+      const result = fromCamera
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 })
+        : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 });
+      if (result.canceled) return;
 
       setSaving(true);
-
-      await updateDoc(doc(FIREBASE_DB, "users", user.uid), {
-        localProfileUri: uri,
-      });
-
+      const uri = result.assets[0].uri;
+      const user = FIREBASE_AUTH.currentUser;
+      if (user) {
+        await updateDoc(doc(FIREBASE_DB, "users", user.uid), { localProfileUri: uri });
+        setProfileUri(uri);
+      }
       Alert.alert("Profile updated", "Profile picture has been set.");
     } catch (err) {
-      console.log("Save image URI error:", err);
       Alert.alert("Error", "Could not save image.");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleSetProfileImage = async () => {
-    const user = FIREBASE_AUTH.currentUser;
-    if (!user) {
-      Alert.alert("Not logged in", "Please log in first.");
-      return;
-    }
-
-    Alert.alert(
-      "Profile Picture",
-      "Choose image source",
-      [
-        { text: "Camera", onPress: () => pickAndSave(true) },
-        { text: "Gallery", onPress: () => pickAndSave(false) },
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true }
-    );
+  const handleSetProfileImage = () => {
+    if (!FIREBASE_AUTH.currentUser) { Alert.alert("Not logged in"); return; }
+    Alert.alert("Profile Picture", "Choose image source", [
+      { text: "Camera",  onPress: () => pickAndSave(true)  },
+      { text: "Gallery", onPress: () => pickAndSave(false) },
+      { text: "Cancel",  style: "cancel"                   },
+    ]);
   };
 
-  const ThemeOption = ({ id, label, previewColor }) => (
+  const openEdit = (field) => {
+    setEditingField(field);
+    if (!pomoSettings) { setTempMinutes(""); return; }
+    if (field === "work")  setTempMinutes(String(pomoSettings.workMinutes));
+    if (field === "short") setTempMinutes(String(pomoSettings.shortBreakMinutes));
+    if (field === "long")  setTempMinutes(String(pomoSettings.longBreakMinutes));
+  };
+
+  const saveEdit = async () => {
+    const n = parseInt(tempMinutes, 10);
+    if (isNaN(n) || n <= 0) { Alert.alert("Invalid value", "Enter minutes greater than 0."); return; }
+    let updated = null;
+    if (editingField === "work")  updated = await setWorkMinutes(n);
+    if (editingField === "short") updated = await setShortBreakMinutes(n);
+    if (editingField === "long")  updated = await setLongBreakMinutes(n);
+    if (updated) setPomoSettings(updated);
+    setEditingField(null);
+    setTempMinutes("");
+  };
+
+  const handleLogout = () => navigation.replace("Login");
+
+  const initials = userName ? userName.charAt(0).toUpperCase() : "U";
+  const currentThemeName = THEMES[themeKey]?.name || themeKey;
+
+  // ── Reusable row ──────────────────────────────────────────────────────────
+  const Row = ({ iconName, iconColor, label, value, onPress, chevron = true, last = false }) => (
     <TouchableOpacity
-      onPress={async () => {
-        await changeTheme(id);
-      }}
-      style={[
-        styles.themeOption,
-        {
-          borderColor:
-            themeKey === id ? theme.colors.primary : theme.colors.mutedText,
-        },
-      ]}
+      style={[s.row, !last && { borderBottomWidth: 1, borderBottomColor: C.input }]}
+      onPress={onPress}
+      disabled={!onPress}
+      activeOpacity={onPress ? 0.7 : 1}
     >
-      <View
-        style={[
-          styles.themeColorDot,
-          { backgroundColor: previewColor },
-        ]}
-      />
-      <Text
-        style={[
-          styles.themeOptionText,
-          {
-            color:
-              themeKey === id ? theme.colors.primary : theme.colors.text,
-          },
-        ]}
-      >
-        {label}
-      </Text>
+      <View style={[s.rowIcon, { backgroundColor: iconColor + "25" }]}>
+        <Ionicons name={iconName} size={18} color={iconColor} />
+      </View>
+      <Text style={[s.rowLabel, { color: C.text }]}>{label}</Text>
+      <View style={s.rowRight}>
+        {value ? <Text style={[s.rowValue, { color: C.muted }]}>{value}</Text> : null}
+        {chevron && onPress && (
+          <Ionicons name="chevron-forward" size={16} color={C.muted} style={{ marginLeft: 4 }} />
+        )}
+      </View>
     </TouchableOpacity>
   );
 
-
-    const [pomoSettings, setPomoSettings] = useState(null);
-
-    useEffect(() => {
-      const load = async () => {
-        const s = await loadPomodoroSettings();
-        setPomoSettings(s);
-      };
-      load();
-    }, []);
-
-
-    const [editingField, setEditingField] = useState(null); // "work" | "short" | "long" | null
-    const [tempMinutes, setTempMinutes] = useState("");
-
-    const openEdit = (field) => {
-  setEditingField(field);
-  if (!pomoSettings) {
-    setTempMinutes("");
-    return;
-  }
-  if (field === "work") setTempMinutes(String(pomoSettings.workMinutes));
-  if (field === "short") setTempMinutes(String(pomoSettings.shortBreakMinutes));
-  if (field === "long") setTempMinutes(String(pomoSettings.longBreakMinutes));
-};
-
-const saveEdit = async () => {
-  const n = parseInt(tempMinutes, 10);
-  if (isNaN(n) || n <= 0) {
-    Alert.alert("Invalid value", "Enter minutes greater than 0.");
-    return;
-  }
-  let updated = null;
-  if (editingField === "work") updated = await setWorkMinutes(n);
-  if (editingField === "short") updated = await setShortBreakMinutes(n);
-  if (editingField === "long") updated = await setLongBreakMinutes(n);
-  if (updated) setPomoSettings(updated);
-  setEditingField(null);
-  setTempMinutes("");
-};
-
-
-
-
-/* TRANSCRIPTION STUFF */
-
-const [transSettings, setTransSettings] = useState(null);
-
-useEffect(() => {
-  const load = async () => {
-    const s = await loadTranscriptionSettings();
-    setTransSettings(s);
-  };
-  load();
-}, []);
-
+  const Section = ({ label }) => (
+    <Text style={[s.sectionLabel, { color: C.muted }]}>{label}</Text>
+  );
 
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: theme.colors.background },
-      ]}
-    >
-      {/* Top */}
-      <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={28} color="#111111" />
-        </TouchableOpacity>
-      <Text style={[styles.header, { color: "#111111" }]}>
-        
-      </Text>
+    <View style={[s.container, { backgroundColor: C.bg }]}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
 
-      </View>
+        {/* ── Page title ───────────────────────────────────────────────── */}
+        <Text style={[s.pageTitle, { color: C.text }]}>Settings</Text>
 
-      <ScrollView
-        style={{ width: "100%" }}
-        contentContainerStyle={{ paddingBottom: 30 }}
-      >
-        {/* Account */}
-        <View
-          style={[
-            styles.card,
-            { backgroundColor: theme.colors.card },
-          ]}
+        {/* ── Profile card ─────────────────────────────────────────────── */}
+        <TouchableOpacity
+          style={[s.profileCard, { backgroundColor: C.card }]}
+          onPress={handleSetProfileImage}
+          activeOpacity={0.8}
         >
-          <View style={styles.cardHeaderRow}>
-            <Ionicons
-              name="person-circle-outline"
-              size={24}
-              color={theme.colors.primary}
-            />
-            <Text
-              style={[
-                styles.cardTitle,
-                { color: theme.colors.text },
-              ]}
-            >
-              Account
-            </Text>
+          <View style={[s.avatar, { backgroundColor: C.primary }]}>
+            {profileUri ? (
+              <Image source={{ uri: profileUri }} style={s.avatarImg} />
+            ) : (
+              <Text style={[s.avatarInitial, { color: C.primaryText }]}>{initials}</Text>
+            )}
           </View>
+          <View style={s.profileInfo}>
+            <Text style={[s.profileName, { color: C.text }]}>{userName.toUpperCase()}</Text>
+            <Text style={[s.profileEmail, { color: C.muted }]}>{userEmail}</Text>
+          </View>
+          {saving && <ActivityIndicator color={C.primary} size="small" />}
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.rowButton}
-            disabled={true}
-          >
-            <Text
-              style={[
-                styles.itemLabel,
-                { color: theme.colors.text },
-              ]}
+        {/* ── APPEARANCE ───────────────────────────────────────────────── */}
+        <Section label="APPEARANCE" />
+        <View style={[s.card, { backgroundColor: C.card }]}>
+          <Row
+            iconName="color-palette-outline"
+            iconColor={C.primary}
+            label="Theme"
+            value={currentThemeName}
+            onPress={() => setShowThemePicker(!showThemePicker)}
+          />
+          {showThemePicker && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ paddingVertical: 12 }}
+              contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
             >
-              Username
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.rowButton}
-            onPress={handleSetProfileImage}
-            disabled={saving}
-          >
-            <Text
-              style={[
-                styles.actionText,
-                { color: theme.colors.primary },
-              ]}
-            >
-              {saving ? "Saving..." : "Set Profile Picture"}
-            </Text>
-          </TouchableOpacity>
+              {Object.entries(THEMES).map(([id, t]) => (
+                <TouchableOpacity
+                  key={id}
+                  onPress={async () => { await changeTheme(id); setShowThemePicker(false); }}
+                  style={[
+                    s.themeChip,
+                    {
+                      borderColor: themeKey === id ? C.primary : C.input,
+                      backgroundColor: themeKey === id ? C.primary + "20" : C.input,
+                    },
+                  ]}
+                >
+                  <View style={[s.themeChipDot, { backgroundColor: t.colors.primary }]} />
+                  <Text style={[s.themeChipTxt, { color: themeKey === id ? C.primary : C.text }]}>
+                    {t.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+          <Row
+            iconName="brush-outline"
+            iconColor={C.primary}
+            label="Custom Theme"
+            onPress={() => Alert.alert("Coming soon", "Custom themes will be available in a future update.")}
+            last
+          />
         </View>
 
-        {/* App Settings */}
-        <View
-          style={[
-            styles.card,
-            { backgroundColor: theme.colors.card },
-          ]}
-        >
-          <View style={styles.cardHeaderRow}>
-            <Ionicons
-              name="settings-outline"
-              size={24}
-              color={theme.colors.primary}
-            />
-            <Text
-              style={[
-                styles.cardTitle,
-                { color: theme.colors.text },
-              ]}
-            >
-              App Settings
-            </Text>
-          </View>
+        {/* ── STUDY PREFERENCES ────────────────────────────────────────── */}
+        <Section label="STUDY PREFERENCES" />
+        <View style={[s.card, { backgroundColor: C.card }]}>
+          <Row
+            iconName="timer-outline"
+            iconColor="#F59E0B"
+            label="Focus Duration"
+            value={`${pomoSettings?.workMinutes ?? 25} min`}
+            onPress={() => openEdit("work")}
+          />
+          <Row
+            iconName="cafe-outline"
+            iconColor="#10B981"
+            label="Break Duration"
+            value={`${pomoSettings?.shortBreakMinutes ?? 5} min`}
+            onPress={() => openEdit("short")}
+          />
+          <Row
+            iconName="moon-outline"
+            iconColor="#6366F1"
+            label="Long Break"
+            value={`${pomoSettings?.longBreakMinutes ?? 15} min`}
+            onPress={() => openEdit("long")}
+          />
+          <Row
+            iconName="volume-medium-outline"
+            iconColor="#EC4899"
+            label="Work Start Sound"
+            value={pomoSettings?.startSound ?? "HEE"}
+            onPress={async () => {
+              const next = pomoSettings?.startSound === "HEE" ? "none" : "HEE";
+              const updated = await setStartSound(next);
+              setPomoSettings(updated);
+            }}
+          />
+          <Row
+            iconName="musical-notes-outline"
+            iconColor="#EC4899"
+            label="Break Over Sound"
+            value={pomoSettings?.breakEndSound ?? "CHIME"}
+            onPress={async () => {
+              const next = pomoSettings?.breakEndSound === "CHIME" ? "none" : "CHIME";
+              const updated = await setBreakEndSound(next);
+              setPomoSettings(updated);
+            }}
+            last={!editingField}
+          />
 
-          <TouchableOpacity style={styles.rowButton}>
-            <Text
-              style={[
-                styles.itemLabel,
-                { color: theme.colors.text },
-              ]}
-            >
-              Mode: Dark
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.rowButton}>
-            <Text
-              style={[
-                styles.itemLabel,
-                { color: theme.colors.text },
-              ]}
-            >
-              Language: English
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.rowButton}>
-            <Text
-              style={[
-                styles.itemLabel,
-                { color: theme.colors.text },
-              ]}
-            >
-              Font Size: Medium
-            </Text>
-          </TouchableOpacity>
-
-          {/* Themes opener */}
-          <TouchableOpacity
-            style={styles.rowButton}
-            onPress={() => setShowThemes((v) => !v)}
-          >
-            <Text
-              style={[
-                styles.itemLabel,
-                { color: theme.colors.text },
-              ]}
-            >
-              Themes
-            </Text>
-            <Ionicons
-              name={showThemes ? "chevron-up" : "chevron-down"}
-              size={18}
-              color={theme.colors.mutedText}
-            />
-          </TouchableOpacity>
-
-          {/* Themes card (scrollable horizontally so more can be added) */}
-          {showThemes && (
-            <View style={styles.themeCard}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingRight: 6 }}
-              >
-              <ThemeOption id="icy" label="Icy Blue Forest" previewColor="#BAD9EB" />
-              <ThemeOption id="peach" label="Peach Deluxe" previewColor="#F8E6D2" />
-              <ThemeOption id="pastelGreen" label="Pastel Green" previewColor="#B4D3B3" />
-              <ThemeOption id="paleHoney" label="Pale Honey" previewColor="#ECCE90" />
-              <ThemeOption id="softSand" label="Soft Sand" previewColor="#F5EFE6"/>
-
-                {/* add more ThemeOption components here later */}
-              </ScrollView>
+          {editingField && (
+            <View style={[s.editBox, { borderColor: C.input }]}>
+              <Text style={[s.editLabel, { color: C.muted }]}>
+                {editingField === "work" ? "Set work minutes" : editingField === "short" ? "Set break minutes" : "Set long break minutes"}
+              </Text>
+              <TextInput
+                style={[s.editInput, { backgroundColor: C.input, color: C.text }]}
+                keyboardType="number-pad"
+                value={tempMinutes}
+                onChangeText={setTempMinutes}
+                placeholder="e.g. 25"
+                placeholderTextColor={C.muted}
+              />
+              <View style={s.editBtns}>
+                <TouchableOpacity onPress={() => { setEditingField(null); setTempMinutes(""); }}>
+                  <Text style={[s.editCancel, { color: C.muted }]}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.editSaveBtn, { backgroundColor: C.primary }]} onPress={saveEdit}>
+                  <Text style={[s.editSaveTxt, { color: C.primaryText }]}>Save</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           )}
         </View>
 
-
-
-
-{/* Transcriptions */}
-<View
-  style={[
-    styles.card,
-    { backgroundColor: theme.colors.card },
-  ]}
->
-  <View style={styles.cardHeaderRow}>
-    <Ionicons
-      name="mic-outline"
-      size={24}
-      color={theme.colors.primary}
-    />
-    <Text
-      style={[
-        styles.cardTitle,
-        { color: theme.colors.text },
-      ]}
-    >
-      Transcriptions
-    </Text>
-  </View>
-
-  <TouchableOpacity style={styles.rowButton}>
-    <Text
-      style={[
-        styles.itemLabel,
-        { color: theme.colors.text },
-      ]}
-    >
-      Export Format: PDF / DOCX (coming soon)
-    </Text>
-  </TouchableOpacity>
-
-  <Text
-    style={[
-      styles.itemLabel,
-      { color: theme.colors.text, marginTop: 8, marginBottom: 4 },
-    ]}
-  >
-    Voice Recognition:
-  </Text>
-
-  {["voiceA", "voiceB", "voiceC"].map((id) => {
-    const label =
-      id === "voiceA" ? "Calm Voice" : id === "voiceB" ? "Bright Voice" : "Deep Voice";
-    const selected = transSettings?.voice === id;
-    return (
-      <TouchableOpacity
-        key={id}
-        style={styles.rowButton}
-        onPress={async () => {
-          const updated = await setVoice(id);
-          if (updated) setTransSettings(updated);
-        }}
-      >
-        <Text
-          style={[
-            styles.itemLabel,
-            {
-              color: selected ? theme.colors.primary : theme.colors.text,
-              fontWeight: selected ? "bold" : "normal",
-            },
-          ]}
-        >
-          {label}
-        </Text>
-        {selected && (
-          <Ionicons
-            name="checkmark-circle"
-            size={18}
-            color={theme.colors.primary}
-          />
-        )}
-      </TouchableOpacity>
-    );
-  })}
-</View>
-
-
-
-
-
-{/* Pomodoro */}
-<View
-  style={[
-    styles.card,
-    { backgroundColor: theme.colors.card },
-  ]}
->
-  <View style={styles.cardHeaderRow}>
-    <Ionicons
-      name="timer-outline"
-      size={24}
-      color={theme.colors.primary}
-    />
-    <Text
-      style={[
-        styles.cardTitle,
-        { color: theme.colors.text },
-      ]}
-    >
-      Pomodoro Timer
-    </Text>
-  </View>
-{/* Durations */}
-<TouchableOpacity
-  style={styles.rowButton}
-  onPress={() => openEdit("work")}
->
-  <Text
-    style={[
-      styles.itemLabel,
-      { color: theme.colors.text },
-    ]}
-  >
-    Work Duration: {pomoSettings?.workMinutes ?? 25} min
-  </Text>
-</TouchableOpacity>
-
-<TouchableOpacity
-  style={styles.rowButton}
-  onPress={() => openEdit("short")}
->
-  <Text
-    style={[
-      styles.itemLabel,
-      { color: theme.colors.text },
-    ]}
-  >
-    Break Duration: {pomoSettings?.shortBreakMinutes ?? 5} min
-  </Text>
-</TouchableOpacity>
-
-<TouchableOpacity
-  style={styles.rowButton}
-  onPress={() => openEdit("long")}
->
-  <Text
-    style={[
-      styles.itemLabel,
-      { color: theme.colors.text },
-    ]}
-  >
-    Long Break: {pomoSettings?.longBreakMinutes ?? 15} min
-  </Text>
-</TouchableOpacity>
-
-{/* Inline edit box */}
-{editingField && (
-  <View style={{ marginTop: 10 }}>
-    <Text
-      style={[
-        styles.itemLabel,
-        { color: theme.colors.text, marginBottom: 4 },
-      ]}
-    >
-      {editingField === "work"
-        ? "Set work minutes"
-        : editingField === "short"
-        ? "Set break minutes"
-        : "Set long break minutes"}
-    </Text>
-    <TextInput
-      style={{
-        borderWidth: 1,
-        borderColor: theme.colors.mutedText,
-        borderRadius: 10,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        color: theme.colors.text,
-      }}
-      keyboardType="number-pad"
-      value={tempMinutes}
-      onChangeText={setTempMinutes}
-      placeholder="e.g. 25"
-      placeholderTextColor={theme.colors.mutedText}
-    />
-    <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 6 }}>
-      <TouchableOpacity onPress={() => { setEditingField(null); setTempMinutes(""); }}>
-        <Text style={{ marginRight: 18, color: theme.colors.mutedText, fontWeight: "bold" }}>
-          Cancel
-        </Text>
-      </TouchableOpacity>
-      <TouchableOpacity onPress={saveEdit}>
-        <Text style={{ color: theme.colors.primary, fontWeight: "bold" }}>
-          Save
-        </Text>
-      </TouchableOpacity>
-    </View>
-  </View>
-)}
-
-  {/* Sounds */}
-  <TouchableOpacity
-    style={styles.rowButton}
-    onPress={async () => {
-      const next =
-        pomoSettings?.startSound === "HEE" ? "none" : "HEE";
-      const updated = await setStartSound(next);
-      setPomoSettings(updated);
-    }}
-  >
-    <Text
-      style={[
-        styles.itemLabel,
-        { color: theme.colors.text },
-      ]}
-    >
-      Work Start Sound: {pomoSettings?.startSound ?? "HEE"}
-    </Text>
-  </TouchableOpacity>
-
-  <TouchableOpacity
-    style={styles.rowButton}
-    onPress={async () => {
-      const next =
-        pomoSettings?.breakEndSound === "CHIME" ? "none" : "CHIME";
-      const updated = await setBreakEndSound(next);
-      setPomoSettings(updated);
-    }}
-  >
-    <Text
-      style={[
-        styles.itemLabel,
-        { color: theme.colors.text },
-      ]}
-    >
-      Break Over Sound: {pomoSettings?.breakEndSound ?? "CHIME"}
-    </Text>
-  </TouchableOpacity>
-</View>
-
-
-        {/* About */}
-        <View
-          style={[
-            styles.card,
-            { backgroundColor: theme.colors.card },
-          ]}
-        >
-          <View style={styles.cardHeaderRow}>
-            <Ionicons
-              name="information-circle-outline"
-              size={24}
-              color={theme.colors.primary}
+        {/* ── TRANSCRIPTION ────────────────────────────────────────────── */}
+        <Section label="TRANSCRIPTION" />
+        <View style={[s.card, { backgroundColor: C.card }]}>
+          {[
+            { id: "voiceA", label: "Calm Voice"   },
+            { id: "voiceB", label: "Bright Voice" },
+            { id: "voiceC", label: "Deep Voice"   },
+          ].map(({ id, label }, i, arr) => (
+            <Row
+              key={id}
+              iconName={transSettings?.voice === id ? "radio-button-on-outline" : "radio-button-off-outline"}
+              iconColor={transSettings?.voice === id ? C.primary : C.muted}
+              label={label}
+              value={transSettings?.voice === id ? "Active" : ""}
+              onPress={async () => {
+                const updated = await setVoice(id);
+                if (updated) setTransSettings(updated);
+              }}
+              chevron={false}
+              last={i === arr.length - 1}
             />
-            <Text
-              style={[
-                styles.cardTitle,
-                { color: theme.colors.text },
-              ]}
-            >
-              About & Support
-            </Text>
-          </View>
-
-          {["Help Center | Rate App", "About App"].map((label) => (
-            <TouchableOpacity key={label} style={styles.rowButton}>
-              <Text
-                style={[
-                  styles.itemLabel,
-                  { color: theme.colors.text },
-                ]}
-              >
-                {label}
-              </Text>
-            </TouchableOpacity>
           ))}
         </View>
 
-        {/* Logout Button */}
+        {/* ── ABOUT ────────────────────────────────────────────────────── */}
+        <Section label="ABOUT" />
+        <View style={[s.card, { backgroundColor: C.card }]}>
+          <Row
+            iconName="information-circle-outline"
+            iconColor={C.muted}
+            label="Version"
+            value="1.0.0"
+            chevron={false}
+          />
+          <Row
+            iconName="help-circle-outline"
+            iconColor={C.muted}
+            label="Help Center"
+            onPress={() => Alert.alert("Help Center", "Coming soon.")}
+          />
+          <Row
+            iconName="star-outline"
+            iconColor="#F59E0B"
+            label="Rate App"
+            onPress={() => Alert.alert("Rate App", "Thanks for using Shepard Learn!")}
+            last
+          />
+        </View>
+
+        {/* ── LOGOUT ───────────────────────────────────────────────────── */}
         <TouchableOpacity
-          style={[
-            styles.logoutCard,
-            { backgroundColor: theme.colors.danger },
-          ]}
+          style={[s.logoutBtn, { backgroundColor: C.danger + "20", borderColor: C.danger + "50" }]}
           onPress={handleLogout}
         >
-          {saving ? (
-            <ActivityIndicator color={theme.colors.primaryText} />
-          ) : (
-            <Text
-              style={[
-                styles.logoutText,
-                { color: theme.colors.primaryText },
-              ]}
-            >
-              LOG OUT
-            </Text>
-          )}
+          <Ionicons name="log-out-outline" size={22} color={C.danger} />
+          <Text style={[s.logoutTxt, { color: C.danger }]}>Logout</Text>
         </TouchableOpacity>
+
       </ScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 28,
+const s = StyleSheet.create({
+  container: { flex: 1, paddingHorizontal: 20, paddingTop: "14%" },
+  pageTitle: { fontSize: 32, fontWeight: "bold", marginBottom: 20 },
+
+  profileCard: {
+    flexDirection: "row", alignItems: "center",
+    borderRadius: 20, padding: 18, gap: 16, marginBottom: 24,
   },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 20,
+  avatar: {
+    width: 60, height: 60, borderRadius: 30,
+    justifyContent: "center", alignItems: "center", overflow: "hidden",
   },
-  header: {
-    fontWeight: "bold",
-    fontSize: 24,
-    marginLeft: 15,
-    letterSpacing: 1,
+  avatarImg:     { width: "100%", height: "100%", resizeMode: "cover" },
+  avatarInitial: { fontSize: 24, fontWeight: "bold" },
+  profileInfo:   { flex: 1 },
+  profileName:   { fontSize: 16, fontWeight: "800", letterSpacing: 1, marginBottom: 4 },
+  profileEmail:  { fontSize: 13 },
+
+  sectionLabel: {
+    fontSize: 11, fontWeight: "700", letterSpacing: 1.5,
+    marginBottom: 8, marginTop: 4, marginLeft: 2,
   },
-  card: {
-    borderRadius: 20,
-    padding: 20,
-    marginVertical: 10,
-    width: "100%",
-    shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 4,
+
+  card: { borderRadius: 20, marginBottom: 20, overflow: "hidden" },
+
+  row: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 16, paddingVertical: 14, gap: 12,
   },
-  cardHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
+  rowIcon:  { width: 34, height: 34, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+  rowLabel: { flex: 1, fontSize: 15, fontWeight: "500" },
+  rowRight: { flexDirection: "row", alignItems: "center" },
+  rowValue: { fontSize: 14 },
+
+  themeChip: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: 20, borderWidth: 1.5,
   },
-  cardTitle: {
-    fontWeight: "bold",
-    fontSize: 18,
-    marginLeft: 8,
+  themeChipDot: { width: 12, height: 12, borderRadius: 6 },
+  themeChipTxt: { fontSize: 12, fontWeight: "600" },
+
+  editBox:    { margin: 12, marginTop: 4, borderWidth: 1, borderRadius: 14, padding: 14, gap: 10 },
+  editLabel:  { fontSize: 13 },
+  editInput:  { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15 },
+  editBtns:   { flexDirection: "row", justifyContent: "flex-end", gap: 16 },
+  editCancel: { fontSize: 14, fontWeight: "600", paddingVertical: 6 },
+  editSaveBtn:{ paddingHorizontal: 20, paddingVertical: 8, borderRadius: 10 },
+  editSaveTxt:{ fontSize: 14, fontWeight: "700" },
+
+  logoutBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 10, borderRadius: 20, paddingVertical: 18,
+    marginTop: 4, marginBottom: 20, borderWidth: 1,
   },
-  rowButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-  },
-  itemLabel: {
-    fontSize: 15,
-  },
-  actionText: {
-    fontWeight: "bold",
-    fontSize: 15,
-    textDecorationLine: "underline",
-  },
-  themeCard: {
-    marginTop: 10,
-    borderRadius: 16,
-    paddingVertical: 10,
-    paddingLeft: 4,
-  },
-  themeOption: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    borderWidth: 2,
-    marginRight: 10,
-  },
-  themeColorDot: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    marginRight: 8,
-  },
-  themeOptionText: {
-    fontWeight: "bold",
-    fontSize: 14,
-  },
-  logoutCard: {
-    borderRadius: 20,
-    paddingVertical: 18,
-    marginVertical: 15,
-    alignItems: "center",
-    width: "100%",
-    alignSelf: "center",
-  },
-  logoutText: {
-    fontWeight: "bold",
-    fontSize: 20,
-  },
+  logoutTxt: { fontSize: 18, fontWeight: "700" },
 });
