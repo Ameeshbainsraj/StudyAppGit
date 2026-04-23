@@ -56,9 +56,41 @@ const FONTS = {
     medium: "System",
     bold: "System",
   },
+  // ── New premium themes ──────────────────────────────────────────────────────
+  wineRed: {
+    regular: "System",
+    medium: "System",
+    bold: "System",
+  },
+  galaxy: {
+    regular: "System",
+    medium: "System",
+    bold: "System",
+  },
+  roseGold: {
+    regular: "System",
+    medium: "System",
+    bold: "System",
+  },
+  arctic: {
+    regular: "System",
+    medium: "System",
+    bold: "System",
+  },
+  ember: {
+    regular: "System",
+    medium: "System",
+    bold: "System",
+  },
+  forestNight: {
+    regular: "System",
+    medium: "System",
+    bold: "System",
+  },
 };
 
 export const THEMES = {
+  // ── Existing themes (unchanged) ─────────────────────────────────────────────
   icy: {
     name: "Icy Blue",
     colors: {
@@ -209,20 +241,110 @@ export const THEMES = {
     fontFamily: FONTS.charcoalGold,
   },
 
-  // ── NEW: Phantom Purple ─────────────────────────────────────────────────────
-  // The dark purple design from the screenshot — deep blacks, vivid purple accent
   phantomPurple: {
     name: "Phantom Purple",
     colors: {
-      background:      "#12121A",   // near-black base
-      card:            "#1C1C28",   // dark card surface
-      primary:         "#7C3AED",   // vivid purple accent
-      primaryText:     "#FFFFFF",   // white text on purple
-      text:            "#FFFFFF",   // main body text
-      mutedText:       "#8888AA",   // subdued labels / placeholders
-      inputBackground: "#1C1C28",   // input fields match card
-      danger:          "#FF3B3B",   // red for delete / errors
+      background:      "#12121A",
+      card:            "#1C1C28",
+      primary:         "#7C3AED",
+      primaryText:     "#FFFFFF",
+      text:            "#FFFFFF",
+      mutedText:       "#8888AA",
+      inputBackground: "#1C1C28",
+      danger:          "#FF3B3B",
     },
     fontFamily: FONTS.phantomPurple,
+  },
+
+  // ── New premium themes ──────────────────────────────────────────────────────
+
+  wineRed: {
+    name: "Wine Red",
+    colors: {
+      background:      "#1A0A0D",   // deep burgundy base
+      card:            "#2A1118",   // slightly lighter burgundy card surface
+      primary:         "#C9A84C",   // warm gold accent
+      primaryText:     "#1A0A0D",   // dark text on gold buttons
+      text:            "#F5E6D3",   // warm off-white body text
+      mutedText:       "#9C7A6A",   // muted rose-brown labels
+      inputBackground: "#2A1118",   // input fields match card
+      danger:          "#FF4545",   // bright red for errors
+    },
+    fontFamily: FONTS.wineRed,
+  },
+
+  galaxy: {
+    name: "Galaxy",
+    colors: {
+      background:      "#07050F",   // near-black deep space base
+      card:            "#110D1F",   // dark purple-tinted card
+      primary:         "#A855F7",   // electric violet accent
+      primaryText:     "#FFFFFF",   // white text on violet
+      text:            "#E8E0FF",   // soft lavender-white body text
+      mutedText:       "#6B5F8A",   // muted purple-grey labels
+      inputBackground: "#110D1F",   // input fields match card
+      danger:          "#F43F5E",   // vivid rose-red for errors
+    },
+    fontFamily: FONTS.galaxy,
+  },
+
+  roseGold: {
+    name: "Rose Gold",
+    colors: {
+      background:      "#FDF0F0",   // warm blush base
+      card:            "#FFFFFF",   // clean white cards
+      primary:         "#B76E79",   // dusty rose accent
+      primaryText:     "#FFFFFF",   // white text on rose buttons
+      text:            "#4A2530",   // deep wine body text
+      mutedText:       "#C4909A",   // soft rose-grey labels
+      inputBackground: "#FFFFFF",   // clean white inputs
+      danger:          "#D94040",   // classic red for errors
+    },
+    fontFamily: FONTS.roseGold,
+  },
+
+  arctic: {
+    name: "Arctic",
+    colors: {
+      background:      "#EDF6FB",   // crisp ice-blue base
+      card:            "#FFFFFF",   // pure white cards
+      primary:         "#0EA5C9",   // cold cyan accent
+      primaryText:     "#FFFFFF",   // white text on cyan buttons
+      text:            "#0C2D3A",   // deep navy body text
+      mutedText:       "#6BAEC6",   // muted sky-blue labels
+      inputBackground: "#FFFFFF",   // clean white inputs
+      danger:          "#E53E3E",   // red for errors
+    },
+    fontFamily: FONTS.arctic,
+  },
+
+  ember: {
+    name: "Ember",
+    colors: {
+      background:      "#111111",   // near-black charcoal base
+      card:            "#1C1C1C",   // dark charcoal card surface
+      primary:         "#F97316",   // hot amber-orange accent
+      primaryText:     "#111111",   // dark text on amber buttons
+      text:            "#F5F0E8",   // warm off-white body text
+      mutedText:       "#7A6A5A",   // warm brown-grey labels
+      inputBackground: "#1C1C1C",   // input fields match card
+      danger:          "#FF3030",   // vivid red for errors
+    },
+    fontFamily: FONTS.ember,
+  },
+
+  forestNight: {
+    name: "Forest Night",
+    colors: {
+      background:      "#0A1A0F",   // deep forest green base
+      card:            "#122018",   // dark green card surface
+      primary:         "#4ADE80",   // bright mint accent
+      primaryText:     "#0A1A0F",   // dark text on mint buttons
+      text:            "#D4F0DC",   // pale green-white body text
+      mutedText:       "#4A7A5A",   // muted forest-green labels
+      inputBackground: "#122018",   // input fields match card
+      danger:          "#FF4545",   // red for errors
+    },
+    fontFamily: FONTS.forestNight,
   },
 };

@@ -1,18 +1,18 @@
-// screens/HomeScreen.js
 import React, { useState, useCallback } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Alert, Image, ScrollView, TextInput, Modal,
+  Alert, Image, ScrollView, TextInput,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { MaterialIcons, FontAwesome5, Ionicons } from "@expo/vector-icons";
 import { FIREBASE_AUTH, FIREBASE_DB } from "../FirebaseConfig";
-import { doc, getDoc } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs } from "firebase/firestore";
 import { useTheme } from "../ThemeContext";
 import {
   loadTasks, saveTask, toggleTask,
   deleteTask, createTask, PRIORITY_COLORS,
 } from "../tasksConfig.js";
+import { awardXP, XP_REWARDS, getLevelFromXP } from "../xpConfig";
 
 export default function HomeScreen({ navigation, route }) {
   const [profileImageUrl, setProfileImageUrl] = useState(null);
@@ -20,21 +20,25 @@ export default function HomeScreen({ navigation, route }) {
   const { theme } = useTheme();
 
   const C = {
-    bg:      theme.colors.background,
-    card:    theme.colors.card,
+    bg: theme.colors.background,
+    card: theme.colors.card,
     primary: theme.colors.primary,
     primaryText: theme.colors.primaryText,
-    text:    theme.colors.text,
-    muted:   theme.colors.mutedText,
-    input:   theme.colors.inputBackground,
-    danger:  theme.colors.danger,
+    text: theme.colors.text,
+    muted: theme.colors.mutedText,
+    input: theme.colors.inputBackground,
+    danger: theme.colors.danger,
   };
 
-  // ── Task state ─────────────────────────────────────────────────────────────
-  const [tasks, setTasks]               = useState([]);
-  const [showAddTask, setShowAddTask]   = useState(false);
+  const [tasks, setTasks] = useState([]);
+  const [showAddTask, setShowAddTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState("");
-  const [newPriority, setNewPriority]   = useState("low");
+  const [newPriority, setNewPriority] = useState("low");
+
+  const [focusToday, setFocusToday] = useState(0);
+  const [sessionsToday, setSessionsToday] = useState(0);
+  const [focusWeek, setFocusWeek] = useState(0);
+  const [xpTotal, setXpTotal] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -44,32 +48,60 @@ export default function HomeScreen({ navigation, route }) {
 
   useFocusEffect(
     useCallback(() => {
-      const fetchUser = async () => {
+      const fetchAll = async () => {
         try {
           const user = FIREBASE_AUTH.currentUser;
           if (!user) return;
-          const ref = doc(FIREBASE_DB, "users", user.uid);
-          const snap = await getDoc(ref);
-          if (snap.exists()) {
-            const data = snap.data();
+          const uid = user.uid;
+
+          const userSnap = await getDoc(doc(FIREBASE_DB, "users", uid));
+          if (userSnap.exists()) {
+            const data = userSnap.data();
             if (data.name) setName(data.name);
-            if (data.localProfileUri) setProfileImageUrl(data.localProfileUri);
+            // ✅ Check both field names for backwards compatibility
+            const uri = data.localProfileUri || data.profileImageUrl || null;
+            setProfileImageUrl(uri);
+            setXpTotal(data.xp ?? 0);
           }
-        } catch (err) {
-          console.log("Fetch user error:", err);
-        }
+
+          const sessionsSnap = await getDocs(
+            collection(FIREBASE_DB, "users", uid, "pomodoroSessions")
+          );
+
+          const now = new Date();
+          const todayStr = now.toISOString().slice(0, 10);
+
+          const dayOfWeek = now.getDay();
+          const diffToMon = (dayOfWeek + 6) % 7;
+          const weekStart = new Date(now);
+          weekStart.setDate(now.getDate() - diffToMon);
+          weekStart.setHours(0, 0, 0, 0);
+
+          let minToday = 0, sessToday = 0, minWeek = 0;
+
+          sessionsSnap.forEach((docSnap) => {
+            const { durationMinutes, completedAt } = docSnap.data();
+            if (!completedAt || !durationMinutes) return;
+            const sessionDate = new Date(completedAt);
+            const sessionStr = sessionDate.toISOString().slice(0, 10);
+            if (sessionStr === todayStr) { minToday += durationMinutes; sessToday += 1; }
+            if (sessionDate >= weekStart) { minWeek += durationMinutes; }
+          });
+
+          setFocusToday(minToday);
+          setSessionsToday(sessToday);
+          setFocusWeek(minWeek);
+
+        } catch (err) { console.log("HomeScreen fetchAll error:", err); }
       };
-      fetchUser();
+
+      fetchAll();
       loadTasks().then(setTasks);
     }, [])
   );
 
-  // ── Add task ───────────────────────────────────────────────────────────────
   const handleAddTask = async () => {
-    if (!newTaskTitle.trim()) {
-      Alert.alert("Empty task", "Please enter a task title.");
-      return;
-    }
+    if (!newTaskTitle.trim()) { Alert.alert("Empty task", "Please enter a task title."); return; }
     const task = createTask(newTaskTitle.trim(), newPriority);
     const updated = await saveTask(task);
     if (updated) setTasks(updated);
@@ -78,39 +110,49 @@ export default function HomeScreen({ navigation, route }) {
     setShowAddTask(false);
   };
 
-  // ── Toggle done ────────────────────────────────────────────────────────────
   const handleToggle = async (id) => {
+    const task = tasks.find((t) => t.id === id);
+    const wasNotDone = task && !task.done;
     const updated = await toggleTask(id);
     if (updated) setTasks(updated);
+    if (wasNotDone) {
+      const { leveledUp, newLevel } = await awardXP(XP_REWARDS.TASK_DONE);
+      if (leveledUp && newLevel) {
+        Alert.alert(
+          "🎉 Level Up!",
+          `You reached Level ${newLevel.level}\n"${newLevel.title}"\n\nKeep up the great work!`,
+          [{ text: "Let's Go! 🚀", style: "default" }]
+        );
+      }
+    }
   };
 
-  // ── Delete task ────────────────────────────────────────────────────────────
   const handleDelete = async (id) => {
     const updated = await deleteTask(id);
     if (updated) setTasks(updated);
   };
 
-  // ── Stats ──────────────────────────────────────────────────────────────────
-  const doneTasks  = tasks.filter((t) => t.done).length;
+  const doneTasks = tasks.filter((t) => t.done).length;
   const totalTasks = tasks.length;
 
   const stats = [
-    { icon: "time-outline",  iconLib: "ion", label: "Focus Today",    value: "0m" },
-    { icon: "flame-outline", iconLib: "ion", label: "Sessions Today", value: "0"  },
-    { icon: "trending-up",   iconLib: "ion", label: "This Week",      value: "0"  },
+    { icon: "time-outline",    iconLib: "ion", label: "Focus Today", value: focusToday > 0 ? `${focusToday}m` : "0m" },
+    { icon: "flame-outline",   iconLib: "ion", label: "Sessions",    value: String(sessionsToday) },
+    { icon: "trending-up",     iconLib: "ion", label: "This Week",   value: focusWeek > 0 ? `${focusWeek}m` : "0m" },
+    { icon: "star-outline",    iconLib: "ion", label: "XP Total",    value: xpTotal > 999 ? `${(xpTotal / 1000).toFixed(1)}k` : String(xpTotal) },
   ];
 
   const quickActions = [
-    { label: "Start Focus",  icon: "timer-outline",  iconLib: "ion", route: "Pomodoro"      },
-    { label: "Transcribe",   icon: "mic-outline",    iconLib: "ion", route: "Transcription" },
-    { label: "Flashcards",   icon: "albums-outline", iconLib: "ion", route: "Flashcards"    },
+    { label: "Start Focus", icon: "timer-outline",  iconLib: "ion", route: "Pomodoro" },
+    { label: "Transcribe",  icon: "mic-outline",    iconLib: "ion", route: "Transcription" },
+    { label: "Flashcards",  icon: "albums-outline", iconLib: "ion", route: "Flashcards" },
   ];
 
   const moreFeatures = [
-    { label: "Notes",    icon: "document-text-outline", iconLib: "ion", route: "Notes"        },
-    { label: "Quiz",     icon: "help-circle-outline",   iconLib: "ion", route: "Quiz"         },
+    { label: "Notes",    icon: "document-text-outline", iconLib: "ion", route: "Notes" },
+    { label: "Quiz",     icon: "help-circle-outline",   iconLib: "ion", route: "Quiz" },
     { label: "Planner",  icon: "calendar-outline",      iconLib: "ion", route: "StudyPlanner" },
-    { label: "Settings", icon: "settings-outline",      iconLib: "ion", route: "Settings"     },
+    { label: "Settings", icon: "settings-outline",      iconLib: "ion", route: "Settings" },
   ];
 
   const renderIcon = (icon, iconLib, size, color) => {
@@ -128,8 +170,7 @@ export default function HomeScreen({ navigation, route }) {
         contentContainerStyle={{ paddingBottom: 100 }}
         keyboardShouldPersistTaps="handled"
       >
-
-        {/* ── Header ─────────────────────────────────────────────────────── */}
+        {/* Header */}
         <View style={s.header}>
           <View style={s.headerLeft}>
             <Text style={[s.welcomeTxt, { color: C.muted }]}>Welcome back,</Text>
@@ -147,18 +188,18 @@ export default function HomeScreen({ navigation, route }) {
           </TouchableOpacity>
         </View>
 
-        {/* ── Stats Row ──────────────────────────────────────────────────── */}
-        <View style={s.statsRow}>
+        {/* Stats 2×2 grid */}
+        <View style={s.statsGrid}>
           {stats.map((stat, i) => (
             <View key={i} style={[s.statCard, { backgroundColor: C.card }]}>
-              {renderIcon(stat.icon, stat.iconLib, 22, C.primary)}
+              {renderIcon(stat.icon, stat.iconLib, 20, C.primary)}
               <Text style={[s.statValue, { color: C.text }]}>{stat.value}</Text>
               <Text style={[s.statLabel, { color: C.muted }]}>{stat.label}</Text>
             </View>
           ))}
         </View>
 
-        {/* ── Today's Tasks header ────────────────────────────────────────── */}
+        {/* Today's Tasks header */}
         <View style={s.sectionHeader}>
           <Text style={[s.sectionTitle, { color: C.text }]}>Today's Tasks</Text>
           <TouchableOpacity
@@ -169,11 +210,10 @@ export default function HomeScreen({ navigation, route }) {
           </TouchableOpacity>
         </View>
 
-        {/* ── Add Task inline form — matches screenshot ─────────────────── */}
+        {/* Add Task form */}
         {showAddTask && (
           <View style={[s.addTaskCard, { backgroundColor: C.card }]}>
             <Text style={[s.addTaskTitle, { color: C.text }]}>Add New Task</Text>
-
             <TextInput
               style={[s.taskInput, { backgroundColor: C.input, color: C.text }]}
               placeholder="Task title..."
@@ -182,23 +222,15 @@ export default function HomeScreen({ navigation, route }) {
               onChangeText={setNewTaskTitle}
               maxLength={80}
             />
-
-            {/* Priority selector */}
             <View style={s.priorityRow}>
               {[
-                { key: "low",    label: "Low",    color: PRIORITY_COLORS.low    },
+                { key: "low",    label: "Low",    color: PRIORITY_COLORS.low },
                 { key: "medium", label: "Medium", color: PRIORITY_COLORS.medium },
-                { key: "high",   label: "High",   color: PRIORITY_COLORS.high   },
+                { key: "high",   label: "High",   color: PRIORITY_COLORS.high },
               ].map((p) => (
                 <TouchableOpacity
                   key={p.key}
-                  style={[
-                    s.priorityBtn,
-                    {
-                      borderColor: p.color,
-                      backgroundColor: newPriority === p.key ? p.color + "25" : "transparent",
-                    },
-                  ]}
+                  style={[s.priorityBtn, { borderColor: p.color, backgroundColor: newPriority === p.key ? p.color + "25" : "transparent" }]}
                   onPress={() => setNewPriority(p.key)}
                 >
                   <Text style={[s.priorityTxt, { color: p.color, fontWeight: newPriority === p.key ? "700" : "500" }]}>
@@ -207,8 +239,6 @@ export default function HomeScreen({ navigation, route }) {
                 </TouchableOpacity>
               ))}
             </View>
-
-            {/* Action buttons */}
             <View style={s.addTaskBtns}>
               <TouchableOpacity
                 style={[s.cancelBtn, { backgroundColor: C.input }]}
@@ -226,87 +256,46 @@ export default function HomeScreen({ navigation, route }) {
           </View>
         )}
 
-        {/* ── Task list ──────────────────────────────────────────────────── */}
+        {/* Task list */}
         {!showAddTask && (
           tasks.length === 0 ? (
             <View style={[s.emptyTasksCard, { backgroundColor: C.card }]}>
               <Ionicons name="clipboard-outline" size={44} color={C.muted} />
-              <Text style={[s.emptyTasksTxt, { color: C.muted }]}>
-                No tasks yet. Add one to get started!
-              </Text>
+              <Text style={[s.emptyTasksTxt, { color: C.muted }]}>No tasks yet. Add one to get started!</Text>
             </View>
           ) : (
             <View style={[s.tasksCard, { backgroundColor: C.card }]}>
-              {/* Progress bar */}
               {totalTasks > 0 && (
                 <View style={s.progressWrap}>
-                  <Text style={[s.progressTxt, { color: C.muted }]}>
-                    {doneTasks}/{totalTasks} done
-                  </Text>
+                  <Text style={[s.progressTxt, { color: C.muted }]}>{doneTasks}/{totalTasks} done</Text>
                   <View style={[s.progressBar, { backgroundColor: C.input }]}>
-                    <View
-                      style={[
-                        s.progressFill,
-                        { backgroundColor: C.primary, width: `${(doneTasks / totalTasks) * 100}%` },
-                      ]}
-                    />
+                    <View style={[s.progressFill, { backgroundColor: C.primary, width: `${(doneTasks / totalTasks) * 100}%` }]} />
                   </View>
                 </View>
               )}
-
               {tasks.map((task, i) => (
                 <View
                   key={task.id}
-                  style={[
-                    s.taskRow,
-                    i < tasks.length - 1 && { borderBottomWidth: 1, borderBottomColor: C.input },
-                  ]}
+                  style={[s.taskRow, i < tasks.length - 1 && { borderBottomWidth: 1, borderBottomColor: C.input }]}
                 >
-                  {/* Priority dot */}
                   <View style={[s.priorityDot, { backgroundColor: PRIORITY_COLORS[task.priority] }]} />
-
-                  {/* Tick button */}
                   <TouchableOpacity
                     onPress={() => handleToggle(task.id)}
-                    style={[
-                      s.tickBtn,
-                      {
-                        borderColor: task.done ? C.primary : C.muted,
-                        backgroundColor: task.done ? C.primary : "transparent",
-                      },
-                    ]}
+                    style={[s.tickBtn, { borderColor: task.done ? C.primary : C.muted, backgroundColor: task.done ? C.primary : "transparent" }]}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     {task.done && <Ionicons name="checkmark" size={12} color={C.primaryText} />}
                   </TouchableOpacity>
-
-                  {/* Task title */}
                   <Text
-                    style={[
-                      s.taskTitle,
-                      {
-                        color: task.done ? C.muted : C.text,
-                        textDecorationLine: task.done ? "line-through" : "none",
-                        flex: 1,
-                      },
-                    ]}
+                    style={[s.taskTitle, { color: task.done ? C.muted : C.text, textDecorationLine: task.done ? "line-through" : "none", flex: 1 }]}
                     numberOfLines={2}
                   >
                     {task.title}
                   </Text>
-
-                  {/* Priority badge */}
                   <View style={[s.priorityBadge, { backgroundColor: PRIORITY_COLORS[task.priority] + "20" }]}>
-                    <Text style={[s.priorityBadgeTxt, { color: PRIORITY_COLORS[task.priority] }]}>
-                      {task.priority}
-                    </Text>
+                    <Text style={[s.priorityBadgeTxt, { color: PRIORITY_COLORS[task.priority] }]}>{task.priority}</Text>
                   </View>
-
-                  {/* Delete button */}
-                  <TouchableOpacity
-                    onPress={() => handleDelete(task.id)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
+                  <TouchableOpacity onPress={() => handleDelete(task.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Ionicons name="trash-outline" size={16} color={C.muted} />
                   </TouchableOpacity>
                 </View>
@@ -315,7 +304,7 @@ export default function HomeScreen({ navigation, route }) {
           )
         )}
 
-        {/* ── Quick Actions ───────────────────────────────────────────────── */}
+        {/* Quick Actions */}
         <Text style={[s.sectionTitle, { color: C.text, marginHorizontal: 20, marginBottom: 12, marginTop: 24 }]}>
           Quick Actions
         </Text>
@@ -333,7 +322,7 @@ export default function HomeScreen({ navigation, route }) {
           ))}
         </View>
 
-        {/* ── More Features ───────────────────────────────────────────────── */}
+        {/* More Features */}
         <Text style={[s.sectionTitle, { color: C.text, marginHorizontal: 20, marginTop: 24, marginBottom: 12 }]}>
           More Features
         </Text>
@@ -358,7 +347,6 @@ export default function HomeScreen({ navigation, route }) {
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-
   header: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     paddingHorizontal: 20, paddingTop: "14%", paddingBottom: 20,
@@ -373,9 +361,15 @@ const s = StyleSheet.create({
   avatarImg:     { width: "100%", height: "100%", resizeMode: "cover" },
   avatarInitial: { fontSize: 20, fontWeight: "bold" },
 
-  statsRow: { flexDirection: "row", paddingHorizontal: 16, gap: 10, marginBottom: 24 },
-  statCard:  { flex: 1, borderRadius: 16, padding: 14, alignItems: "flex-start", gap: 6 },
-  statValue: { fontSize: 22, fontWeight: "bold" },
+  statsGrid: {
+    flexDirection: "row", flexWrap: "wrap",
+    paddingHorizontal: 16, gap: 10, marginBottom: 24,
+  },
+  statCard: {
+    width: "47%", borderRadius: 16,
+    padding: 14, alignItems: "flex-start", gap: 6,
+  },
+  statValue: { fontSize: 18, fontWeight: "bold" },
   statLabel: { fontSize: 11 },
 
   sectionHeader: {
@@ -388,82 +382,42 @@ const s = StyleSheet.create({
     justifyContent: "center", alignItems: "center",
   },
 
-  // Add task form — matches screenshot
-  addTaskCard: {
-    marginHorizontal: 16, borderRadius: 20,
-    padding: 20, gap: 16, marginBottom: 16,
-  },
+  addTaskCard: { marginHorizontal: 16, borderRadius: 20, padding: 20, gap: 16, marginBottom: 16 },
   addTaskTitle: { fontSize: 20, fontWeight: "bold" },
-  taskInput: {
-    borderRadius: 14, paddingHorizontal: 16,
-    paddingVertical: 14, fontSize: 15,
-  },
+  taskInput: { borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15 },
   priorityRow: { flexDirection: "row", gap: 10 },
-  priorityBtn: {
-    flex: 1, paddingVertical: 12, borderRadius: 12,
-    borderWidth: 1.5, alignItems: "center",
-  },
-  priorityTxt: { fontSize: 14 },
-  addTaskBtns: { flexDirection: "row", gap: 12 },
-  cancelBtn: {
-    flex: 1, paddingVertical: 14, borderRadius: 14,
-    alignItems: "center",
-  },
-  cancelTxt:  { fontSize: 15, fontWeight: "600" },
-  confirmBtn: {
-    flex: 1, paddingVertical: 14, borderRadius: 14,
-    alignItems: "center",
-  },
-  confirmTxt: { fontSize: 15, fontWeight: "700" },
+  priorityBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1.5, alignItems: "center" },
+  priorityTxt:  { fontSize: 14 },
+  addTaskBtns:  { flexDirection: "row", gap: 12 },
+  cancelBtn:    { flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: "center" },
+  cancelTxt:    { fontSize: 15, fontWeight: "600" },
+  confirmBtn:   { flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: "center" },
+  confirmTxt:   { fontSize: 15, fontWeight: "700" },
 
-  // Empty state
   emptyTasksCard: {
     marginHorizontal: 16, borderRadius: 18,
-    paddingVertical: 40, alignItems: "center",
-    gap: 12, marginBottom: 8,
+    paddingVertical: 40, alignItems: "center", gap: 12, marginBottom: 8,
   },
   emptyTasksTxt: { fontSize: 14 },
 
-  // Task list card
-  tasksCard: {
-    marginHorizontal: 16, borderRadius: 18,
-    paddingVertical: 4, marginBottom: 8,
-    overflow: "hidden",
-  },
+  tasksCard: { marginHorizontal: 16, borderRadius: 18, paddingVertical: 4, marginBottom: 8, overflow: "hidden" },
   progressWrap: { paddingHorizontal: 16, paddingVertical: 12, gap: 6 },
   progressTxt:  { fontSize: 12, textAlign: "right" },
   progressBar:  { height: 4, borderRadius: 2, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 2 },
 
-  taskRow: {
-    flexDirection: "row", alignItems: "center",
-    paddingHorizontal: 16, paddingVertical: 14, gap: 10,
-  },
-  priorityDot: { width: 6, height: 6, borderRadius: 3 },
-  tickBtn: {
-    width: 22, height: 22, borderRadius: 11,
-    borderWidth: 1.5, justifyContent: "center", alignItems: "center",
-  },
-  taskTitle: { fontSize: 14, lineHeight: 20 },
-  priorityBadge: {
-    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
-  },
+  taskRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingVertical: 14, gap: 10 },
+  priorityDot:     { width: 6, height: 6, borderRadius: 3 },
+  tickBtn: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, justifyContent: "center", alignItems: "center" },
+  taskTitle:        { fontSize: 14, lineHeight: 20 },
+  priorityBadge:    { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
   priorityBadgeTxt: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
 
-  // Quick actions
-  quickRow: { flexDirection: "row", paddingHorizontal: 16, gap: 10 },
-  quickCard: {
-    flex: 1, borderRadius: 18, paddingVertical: 22,
-    paddingHorizontal: 8, alignItems: "center", gap: 10,
-  },
+  quickRow:  { flexDirection: "row", paddingHorizontal: 16, gap: 10 },
+  quickCard: { flex: 1, borderRadius: 18, paddingVertical: 22, paddingHorizontal: 8, alignItems: "center", gap: 10 },
   quickLabel: { fontSize: 13, fontWeight: "700", textAlign: "center" },
 
-  // More features
   moreRow: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 16, gap: 10 },
-  moreCard: {
-    width: "47%", borderRadius: 16,
-    paddingVertical: 18, paddingHorizontal: 14,
-    flexDirection: "row", alignItems: "center", gap: 12,
-  },
+  moreCard: { width: "47%", borderRadius: 16, paddingVertical: 18, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 12 },
   moreLabel: { fontSize: 14, fontWeight: "600" },
 });

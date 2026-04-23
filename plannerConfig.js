@@ -1,71 +1,55 @@
-// plannerConfig.js
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { FIREBASE_DB, FIREBASE_AUTH } from "./FirebaseConfig";
+import {
+  collection, doc, addDoc, getDocs,
+  deleteDoc, updateDoc, query, orderBy, serverTimestamp
+} from "firebase/firestore";
 
-const SESSIONS_KEY = "study-planner-sessions";
+const getRef = () =>
+  collection(FIREBASE_DB, "users", FIREBASE_AUTH.currentUser?.uid, "sessions");
 
 export async function loadSessions() {
   try {
-    const raw = await AsyncStorage.getItem(SESSIONS_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.log("loadSessions error:", e);
-    return [];
-  }
+    const snap = await getDocs(query(getRef(), orderBy("createdAt", "desc")));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (e) { console.log("loadSessions error:", e); return []; }
 }
 
 export async function saveSession(session) {
-  // session: { id, subject, date, durationMinutes, done, color }
   try {
-    const list = await loadSessions();
-    const index = list.findIndex((s) => s.id === session.id);
-    if (index >= 0) {
-      list[index] = session;
-    } else {
-      list.unshift(session);
-    }
-    await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify(list));
-    return list;
-  } catch (e) {
-    console.log("saveSession error:", e);
-    return null;
-  }
+    const { id, ...data } = session;
+    await addDoc(getRef(), { ...data, createdAt: serverTimestamp() });
+    return await loadSessions();
+  } catch (e) { console.log("saveSession error:", e); return null; }
 }
 
 export async function deleteSession(id) {
   try {
-    const list = await loadSessions();
-    const updated = list.filter((s) => s.id !== id);
-    await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify(updated));
-    return updated;
-  } catch (e) {
-    console.log("deleteSession error:", e);
-    return null;
-  }
+    await deleteDoc(
+      doc(FIREBASE_DB, "users", FIREBASE_AUTH.currentUser?.uid, "sessions", id)
+    );
+    return await loadSessions();
+  } catch (e) { console.log("deleteSession error:", e); return null; }
 }
 
 export async function toggleSessionDone(id) {
   try {
     const list = await loadSessions();
-    const updated = list.map((s) =>
-      s.id === id ? { ...s, done: !s.done } : s
+    const session = list.find((s) => s.id === id);
+    if (!session) return list;
+    await updateDoc(
+      doc(FIREBASE_DB, "users", FIREBASE_AUTH.currentUser?.uid, "sessions", id),
+      { done: !session.done }
     );
-    await AsyncStorage.setItem(SESSIONS_KEY, JSON.stringify(updated));
-    return updated;
-  } catch (e) {
-    console.log("toggleSessionDone error:", e);
-    return null;
-  }
+    return await loadSessions();
+  } catch (e) { console.log("toggleSessionDone error:", e); return null; }
 }
 
-export function createSession(subject = "", date = "", durationMinutes = 25, color = "#7C3AED") {
+export function createSession(
+  subject = "", date = "", durationMinutes = 25, color = "#7C3AED"
+) {
   return {
-    id: Date.now().toString(),
-    subject,
-    date,
-    durationMinutes,
-    done: false,
-    color,
+    subject, date, durationMinutes,
+    done: false, color,
     createdAt: new Date().toISOString(),
   };
 }

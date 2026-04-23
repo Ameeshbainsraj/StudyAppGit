@@ -1,38 +1,32 @@
-// pomodoroConfig.js
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
-const KEY = "pomodoro-settings";
+import { FIREBASE_DB, FIREBASE_AUTH } from "./FirebaseConfig";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
 const DEFAULTS = {
   workMinutes: 25,
   shortBreakMinutes: 5,
   longBreakMinutes: 15,
-  startSound: "HEE",   // or "none"
+  startSound: "HEE",
   breakEndSound: "CHIME",
 };
 
+const getRef = () =>
+  doc(FIREBASE_DB, "users", FIREBASE_AUTH.currentUser?.uid, "pomodoroSettings", "settings");
+
 export async function loadPomodoroSettings() {
   try {
-    const raw = await AsyncStorage.getItem(KEY);
-    if (!raw) return DEFAULTS;
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULTS, ...parsed };
-  } catch (e) {
-    console.log("loadPomodoroSettings error:", e);
-    return DEFAULTS;
-  }
+    const snap = await getDoc(getRef());
+    if (!snap.exists()) return DEFAULTS;
+    return { ...DEFAULTS, ...snap.data() };
+  } catch (e) { return DEFAULTS; }
 }
 
 async function save(partial) {
   try {
     const current = await loadPomodoroSettings();
     const merged = { ...current, ...partial };
-    await AsyncStorage.setItem(KEY, JSON.stringify(merged));
+    await setDoc(getRef(), merged);
     return merged;
-  } catch (e) {
-    console.log("savePomodoroSettings error:", e);
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
 export const setWorkMinutes = (n) => save({ workMinutes: n });

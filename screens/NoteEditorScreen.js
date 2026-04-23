@@ -19,8 +19,9 @@ import * as Sharing from "expo-sharing";
 import * as FileSystem from "expo-file-system";
 import { useTheme } from "../ThemeContext";
 import { saveNote, createNote } from "../notesConfig";
+import { awardXP, XP_REWARDS } from "../xpConfig"; // ← NEW
 
-const GROQ_API_KEY = "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"; // 🔑 same key as everywhere else
+const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_KEY; // ← NEW
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "llama-3.3-70b-versatile";
 
@@ -40,9 +41,9 @@ export default function NoteEditorScreen({ navigation, route }) {
     danger:      theme.colors.danger,
   };
 
-  const [title, setTitle]           = useState(initialNote?.title || "");
-  const [content, setContent]       = useState(initialNote?.content || "");
-  const [saving, setSaving]         = useState(false);
+  const [title, setTitle]             = useState(initialNote?.title || "");
+  const [content, setContent]         = useState(initialNote?.content || "");
+  const [saving, setSaving]           = useState(false);
   const [summarising, setSummarising] = useState(false);
 
   // ── Save note ──────────────────────────────────────────────────────────────
@@ -59,6 +60,7 @@ export default function NoteEditorScreen({ navigation, route }) {
       updatedAt: new Date().toISOString(),
     };
     await saveNote(note);
+    await awardXP(XP_REWARDS.NOTE_SAVED); // ← NEW
     setSaving(false);
     navigation.goBack();
   };

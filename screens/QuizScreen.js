@@ -6,6 +6,7 @@ import {
 } from "react-native";
 import { Ionicons, MaterialIcons, Entypo } from "@expo/vector-icons";
 import { useTheme } from "../ThemeContext";
+import { awardXP, XP_REWARDS } from "../xpConfig";
 
 const GROQ_API_KEY = "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"; // 🔑 your key
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -104,11 +105,22 @@ Return ONLY a valid JSON array with no extra text:
     setAnswers((prev) => ({ ...prev, [questionIndex]: choiceIndex }));
   };
 
-  const submitQuiz = () => {
+  const submitQuiz = async () => {
     if (Object.keys(answers).length < questions.length) {
       Alert.alert("Not done", "Please answer all questions before submitting.");
       return;
     }
+
+    // Award XP for completing the quiz
+    const { leveledUp, newLevel } = await awardXP(XP_REWARDS.QUIZ_COMPLETED);
+    if (leveledUp && newLevel) {
+      Alert.alert(
+        "🎉 Level Up!",
+        `You reached Level ${newLevel.level}\n"${newLevel.title}"\n\nYour knowledge is growing!`,
+        [{ text: "Let's Go! 🚀", style: "default" }]
+      );
+    }
+
     setPhase("result");
   };
 

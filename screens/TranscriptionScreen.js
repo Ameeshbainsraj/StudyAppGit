@@ -21,8 +21,9 @@ import {
   clearTranscriptionHistory,
 } from "../transcriptionConfig";
 import { createNote } from "../notesConfig";
+import { awardXP, XP_REWARDS } from "../xpConfig"; // ← NEW
 
-const GROQ_API_KEY = "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"; // 🔑 replace with your key
+const GROQ_API_KEY = "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";
 const GROQ_WHISPER_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 
 // ── Pulse ring ────────────────────────────────────────────────────────────────
@@ -189,6 +190,7 @@ export default function TranscriptionScreen({ navigation }) {
       const updated = await addTranscriptionToHistory(entry);
       if (updated) setHistory(updated);
       setActiveItem(entry);
+      await awardXP(XP_REWARDS.TRANSCRIPTION); // ← NEW
       setIsProcessing(false);
     } catch (e) {
       console.error("Groq transcription error:", e);

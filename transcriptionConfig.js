@@ -1,82 +1,68 @@
-// transcriptionConfig.js
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { FIREBASE_DB, FIREBASE_AUTH } from "./FirebaseConfig";
+import {
+  collection, doc, addDoc, getDocs, deleteDoc,
+  query, orderBy, serverTimestamp, setDoc, getDoc
+} from "firebase/firestore";
 
-const SETTINGS_KEY = "transcription-settings";
-const HISTORY_KEY = "transcription-history";
+const getSettingsRef = () =>
+  doc(FIREBASE_DB, "users", FIREBASE_AUTH.currentUser?.uid, "transcriptionSettings", "settings");
 
-const DEFAULT_SETTINGS = {
-  voice: "voiceA",
-};
+const getHistoryRef = () =>
+  collection(FIREBASE_DB, "users", FIREBASE_AUTH.currentUser?.uid, "transcriptions");
+
+const DEFAULT_SETTINGS = { voice: "voiceA" };
 
 export async function loadTranscriptionSettings() {
   try {
-    const raw = await AsyncStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULT_SETTINGS, ...parsed };
-  } catch (e) {
-    console.log("loadTranscriptionSettings error:", e);
-    return DEFAULT_SETTINGS;
-  }
+    const snap = await getDoc(getSettingsRef());
+    if (!snap.exists()) return DEFAULT_SETTINGS;
+    return { ...DEFAULT_SETTINGS, ...snap.data() };
+  } catch (e) { return DEFAULT_SETTINGS; }
 }
 
 export async function setVoice(id) {
   try {
     const current = await loadTranscriptionSettings();
     const merged = { ...current, voice: id };
-    await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+    await setDoc(getSettingsRef(), merged);
     return merged;
-  } catch (e) {
-    console.log("setVoice error:", e);
-    return null;
-  }
+  } catch (e) { return null; }
 }
-
-// ----- History -----
 
 export async function loadTranscriptionHistory() {
   try {
-    const raw = await AsyncStorage.getItem(HISTORY_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch (e) {
-    console.log("loadTranscriptionHistory error:", e);
-    return [];
-  }
+    const snap = await getDocs(
+      query(getHistoryRef(), orderBy("createdAt", "desc"))
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (e) { return []; }
 }
 
 export async function addTranscriptionToHistory(entry) {
   try {
-    const list = await loadTranscriptionHistory();
-    const updated = [entry, ...list];
-    await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-    return updated;
-  } catch (e) {
-    console.log("addTranscriptionToHistory error:", e);
-    return null;
-  }
+    await addDoc(getHistoryRef(), { ...entry, createdAt: serverTimestamp() });
+    return await loadTranscriptionHistory();
+  } catch (e) { return null; }
 }
 
-// Delete a single transcription by id
 export async function deleteTranscriptionFromHistory(id) {
   try {
-    const list = await loadTranscriptionHistory();
-    const updated = list.filter((item) => item.id !== id);
-    await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
-    return updated;
-  } catch (e) {
-    console.log("deleteTranscriptionFromHistory error:", e);
-    return null;
-  }
+    await deleteDoc(
+      doc(FIREBASE_DB, "users", FIREBASE_AUTH.currentUser?.uid, "transcriptions", id)
+    );
+    return await loadTranscriptionHistory();
+  } catch (e) { return null; }
 }
 
-// Delete all transcriptions
 export async function clearTranscriptionHistory() {
   try {
-    await AsyncStorage.removeItem(HISTORY_KEY);
+    const list = await loadTranscriptionHistory();
+    const uid = FIREBASE_AUTH.currentUser?.uid;
+    await Promise.all(
+      list.map((item) =>
+        deleteDoc(doc(FIREBASE_DB, "users", uid, "transcriptions", item.id))
+      )
+    );
     return [];
-  } catch (e) {
-    console.log("clearTranscriptionHistory error:", e);
-    return null;
-  }
+  } catch (e) { return null; }
 }

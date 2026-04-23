@@ -11,6 +11,7 @@ import {
   loadSessions, saveSession, deleteSession,
   toggleSessionDone, createSession, SESSION_COLORS,
 } from "../plannerConfig";
+import { awardXP, XP_REWARDS } from "../xpConfig"; // ← NEW
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -63,7 +64,10 @@ export default function StudyPlannerScreen({ navigation }) {
     }
     const session = createSession(newSubject.trim(), selectedDay, duration, newColor);
     const updated = await saveSession(session);
-    if (updated) setSessions(updated);
+    if (updated) {
+      setSessions(updated);
+      await awardXP(XP_REWARDS.PLANNER_SESSION); // ← NEW
+    }
     setNewSubject("");
     setNewDuration("25");
     setNewColor(SESSION_COLORS[0]);

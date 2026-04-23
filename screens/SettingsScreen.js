@@ -40,6 +40,7 @@ export default function SettingsScreen({ navigation }) {
   const [editingField, setEditingField]   = useState(null);
   const [tempMinutes, setTempMinutes]     = useState("");
   const [showThemePicker, setShowThemePicker] = useState(false);
+  const [isAdmin, setIsAdmin]             = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -50,7 +51,9 @@ export default function SettingsScreen({ navigation }) {
         if (snap.exists()) {
           const data = snap.data();
           if (data.name) setUserName(data.name);
+          // ✅ Read localProfileUri (the field we always write to)
           if (data.localProfileUri) setProfileUri(data.localProfileUri);
+          setIsAdmin(data.isAdmin === true);
         }
       }
       const ps = await loadPomodoroSettings();
@@ -79,6 +82,7 @@ export default function SettingsScreen({ navigation }) {
       const uri = result.assets[0].uri;
       const user = FIREBASE_AUTH.currentUser;
       if (user) {
+        // ✅ Always write to localProfileUri so all screens read the same field
         await updateDoc(doc(FIREBASE_DB, "users", user.uid), { localProfileUri: uri });
         setProfileUri(uri);
       }
@@ -124,7 +128,6 @@ export default function SettingsScreen({ navigation }) {
   const initials = userName ? userName.charAt(0).toUpperCase() : "U";
   const currentThemeName = THEMES[themeKey]?.name || themeKey;
 
-  // ── Reusable row ──────────────────────────────────────────────────────────
   const Row = ({ iconName, iconColor, label, value, onPress, chevron = true, last = false }) => (
     <TouchableOpacity
       style={[s.row, !last && { borderBottomWidth: 1, borderBottomColor: C.input }]}
@@ -153,10 +156,9 @@ export default function SettingsScreen({ navigation }) {
     <View style={[s.container, { backgroundColor: C.bg }]}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
 
-        {/* ── Page title ───────────────────────────────────────────────── */}
         <Text style={[s.pageTitle, { color: C.text }]}>Settings</Text>
 
-        {/* ── Profile card ─────────────────────────────────────────────── */}
+        {/* ── Profile card ── */}
         <TouchableOpacity
           style={[s.profileCard, { backgroundColor: C.card }]}
           onPress={handleSetProfileImage}
@@ -172,11 +174,33 @@ export default function SettingsScreen({ navigation }) {
           <View style={s.profileInfo}>
             <Text style={[s.profileName, { color: C.text }]}>{userName.toUpperCase()}</Text>
             <Text style={[s.profileEmail, { color: C.muted }]}>{userEmail}</Text>
+            <Text style={[s.profileHint, { color: C.muted }]}>Tap to change photo</Text>
           </View>
           {saving && <ActivityIndicator color={C.primary} size="small" />}
         </TouchableOpacity>
 
-        {/* ── APPEARANCE ───────────────────────────────────────────────── */}
+        {/* ── ACCOUNT ── */}
+        <Section label="ACCOUNT" />
+        <View style={[s.card, { backgroundColor: C.card }]}>
+          <Row
+            iconName="person-outline"
+            iconColor={C.primary}
+            label="Profile & XP"
+            onPress={() => navigation.navigate("Profile")}
+            last={!isAdmin}
+          />
+          {isAdmin && (
+            <Row
+              iconName="shield-outline"
+              iconColor="#EF4444"
+              label="Admin Panel"
+              onPress={() => navigation.navigate("Admin")}
+              last
+            />
+          )}
+        </View>
+
+        {/* ── APPEARANCE ── */}
         <Section label="APPEARANCE" />
         <View style={[s.card, { backgroundColor: C.card }]}>
           <Row
@@ -222,7 +246,7 @@ export default function SettingsScreen({ navigation }) {
           />
         </View>
 
-        {/* ── STUDY PREFERENCES ────────────────────────────────────────── */}
+        {/* ── STUDY PREFERENCES ── */}
         <Section label="STUDY PREFERENCES" />
         <View style={[s.card, { backgroundColor: C.card }]}>
           <Row
@@ -269,7 +293,6 @@ export default function SettingsScreen({ navigation }) {
             }}
             last={!editingField}
           />
-
           {editingField && (
             <View style={[s.editBox, { borderColor: C.input }]}>
               <Text style={[s.editLabel, { color: C.muted }]}>
@@ -295,7 +318,7 @@ export default function SettingsScreen({ navigation }) {
           )}
         </View>
 
-        {/* ── TRANSCRIPTION ────────────────────────────────────────────── */}
+        {/* ── TRANSCRIPTION ── */}
         <Section label="TRANSCRIPTION" />
         <View style={[s.card, { backgroundColor: C.card }]}>
           {[
@@ -319,7 +342,7 @@ export default function SettingsScreen({ navigation }) {
           ))}
         </View>
 
-        {/* ── ABOUT ────────────────────────────────────────────────────── */}
+        {/* ── ABOUT ── */}
         <Section label="ABOUT" />
         <View style={[s.card, { backgroundColor: C.card }]}>
           <Row
@@ -344,7 +367,7 @@ export default function SettingsScreen({ navigation }) {
           />
         </View>
 
-        {/* ── LOGOUT ───────────────────────────────────────────────────── */}
+        {/* ── LOGOUT ── */}
         <TouchableOpacity
           style={[s.logoutBtn, { backgroundColor: C.danger + "20", borderColor: C.danger + "50" }]}
           onPress={handleLogout}
@@ -374,7 +397,8 @@ const s = StyleSheet.create({
   avatarInitial: { fontSize: 24, fontWeight: "bold" },
   profileInfo:   { flex: 1 },
   profileName:   { fontSize: 16, fontWeight: "800", letterSpacing: 1, marginBottom: 4 },
-  profileEmail:  { fontSize: 13 },
+  profileEmail:  { fontSize: 13, marginBottom: 2 },
+  profileHint:   { fontSize: 11 },
 
   sectionLabel: {
     fontSize: 11, fontWeight: "700", letterSpacing: 1.5,

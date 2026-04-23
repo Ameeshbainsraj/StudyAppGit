@@ -2,10 +2,11 @@
 import React, { useState, useRef } from "react";
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  Animated, Dimensions,
+  Animated, Dimensions, Alert,
 } from "react-native";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { useTheme } from "../ThemeContext";
+import { awardXP, XP_REWARDS } from "../xpConfig";
 
 const { width } = Dimensions.get("window");
 
@@ -52,7 +53,7 @@ export default function FlashcardStudyScreen({ navigation, route }) {
   });
 
   // ── Navigate cards ─────────────────────────────────────────────────────────
-  const next = (markKnown) => {
+  const next = async (markKnown) => {
     if (markKnown) {
       setKnown((k) => [...k, card.id]);
     } else {
@@ -64,6 +65,15 @@ export default function FlashcardStudyScreen({ navigation, route }) {
     setIsFlipped(false);
 
     if (currentIndex + 1 >= cards.length) {
+      // Award XP for finishing the deck
+      const { leveledUp, newLevel } = await awardXP(XP_REWARDS.FLASHCARD_STUDY);
+      if (leveledUp && newLevel) {
+        Alert.alert(
+          "🎉 Level Up!",
+          `You reached Level ${newLevel.level}\n"${newLevel.title}"\n\nYou're on a roll!`,
+          [{ text: "Let's Go! 🚀", style: "default" }]
+        );
+      }
       setFinished(true);
     } else {
       setCurrentIndex((i) => i + 1);
