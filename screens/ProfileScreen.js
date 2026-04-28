@@ -8,6 +8,7 @@ import {
   Alert,
   Modal,
   FlatList,
+  Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
@@ -50,6 +51,20 @@ export default function ProfileScreen({ navigation }) {
   const [levelInfo, setLevelInfo] = useState(null);
   const [showLevels, setShowLevels] = useState(false);
   const [showBadges, setShowBadges] = useState(false);
+
+  const glowAnim = React.useRef(new Animated.Value(0)).current;
+
+  React.useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowAnim, { toValue: 1, duration: 1400, useNativeDriver: false }),
+        Animated.timing(glowAnim, { toValue: 0, duration: 1400, useNativeDriver: false }),
+      ])
+    ).start();
+  }, []);
+
+  const glowRadius = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [10, 28] });
+  const glowOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.9] });
 
   const C = {
     bg: theme.colors.background,
@@ -101,10 +116,23 @@ export default function ProfileScreen({ navigation }) {
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-        {/* ── Badge avatar ── */}
-        <View style={[styles.badgeAvatar, { borderColor: badge.ring, shadowColor: badge.ring, backgroundColor: badge.color + "18" }]}>
+        {/* ── Badge avatar with glowing ring ── */}
+        <Animated.View
+          style={[
+            styles.badgeAvatar,
+            {
+              borderColor: badge.ring,
+              backgroundColor: badge.color + "18",
+              shadowColor: badge.ring,
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: glowOpacity,
+              shadowRadius: glowRadius,
+              elevation: 18,
+            },
+          ]}
+        >
           <Text style={styles.badgeAvatarEmoji}>{badge.emoji}</Text>
-        </View>
+        </Animated.View>
 
         <View style={[styles.badgeChip, { backgroundColor: badge.color }]}>
           <Text style={styles.badgeChipLabel}>{badge.label}</Text>
@@ -313,7 +341,6 @@ const styles = StyleSheet.create({
   badgeAvatar: {
     width: 110, height: 110, borderRadius: 55, borderWidth: 3,
     justifyContent: "center", alignItems: "center", marginBottom: 10,
-    shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.55, shadowRadius: 12, elevation: 10,
   },
   badgeAvatarEmoji: { fontSize: 52 },
   badgeChip: {

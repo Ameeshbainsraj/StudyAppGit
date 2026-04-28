@@ -1,7 +1,7 @@
 import { FIREBASE_DB, FIREBASE_AUTH } from "./FirebaseConfig";
 import {
   collection, doc, addDoc, getDocs, deleteDoc,
-  query, orderBy, serverTimestamp, setDoc, getDoc
+  query, orderBy, setDoc, getDoc
 } from "firebase/firestore";
 
 const getSettingsRef = () =>
@@ -17,7 +17,10 @@ export async function loadTranscriptionSettings() {
     const snap = await getDoc(getSettingsRef());
     if (!snap.exists()) return DEFAULT_SETTINGS;
     return { ...DEFAULT_SETTINGS, ...snap.data() };
-  } catch (e) { return DEFAULT_SETTINGS; }
+  } catch (e) {
+    console.error("loadTranscriptionSettings error:", e);
+    return DEFAULT_SETTINGS;
+  }
 }
 
 export async function setVoice(id) {
@@ -26,7 +29,10 @@ export async function setVoice(id) {
     const merged = { ...current, voice: id };
     await setDoc(getSettingsRef(), merged);
     return merged;
-  } catch (e) { return null; }
+  } catch (e) {
+    console.error("setVoice error:", e);
+    return null;
+  }
 }
 
 export async function loadTranscriptionHistory() {
@@ -34,15 +40,35 @@ export async function loadTranscriptionHistory() {
     const snap = await getDocs(
       query(getHistoryRef(), orderBy("createdAt", "desc"))
     );
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  } catch (e) { return []; }
+    // Always use Firestore's real doc ID — never the id field stored inside the doc
+    return snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    }));
+  } catch (e) {
+    console.error("loadTranscriptionHistory error:", e);
+    return [];
+  }
 }
 
 export async function addTranscriptionToHistory(entry) {
   try {
-    await addDoc(getHistoryRef(), { ...entry, createdAt: serverTimestamp() });
+    // Strip any local id field — Firestore generates the real doc ID
+    const { id: _ignore, ...rest } = entry;
+
+    // Use a client-side ISO timestamp so the doc is immediately
+    // queryable by orderBy("createdAt") without a serverTimestamp race condition
+    await addDoc(getHistoryRef(), {
+      ...rest,
+      createdAt: new Date().toISOString(),
+    });
+
+    // Reload and return the updated list with correct Firestore IDs
     return await loadTranscriptionHistory();
-  } catch (e) { return null; }
+  } catch (e) {
+    console.error("addTranscriptionToHistory error:", e);
+    return null;
+  }
 }
 
 export async function deleteTranscriptionFromHistory(id) {
@@ -51,7 +77,10 @@ export async function deleteTranscriptionFromHistory(id) {
       doc(FIREBASE_DB, "users", FIREBASE_AUTH.currentUser?.uid, "transcriptions", id)
     );
     return await loadTranscriptionHistory();
-  } catch (e) { return null; }
+  } catch (e) {
+    console.error("deleteTranscriptionFromHistory error:", e);
+    return null;
+  }
 }
 
 export async function clearTranscriptionHistory() {
@@ -64,5 +93,8 @@ export async function clearTranscriptionHistory() {
       )
     );
     return [];
-  } catch (e) { return null; }
+  } catch (e) {
+    console.error("clearTranscriptionHistory error:", e);
+    return null;
+  }
 }

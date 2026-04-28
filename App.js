@@ -22,6 +22,7 @@ import QuizScreen from "./screens/QuizScreen";
 import StudyPlannerScreen from "./screens/StudyPlannerScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import AdminScreen from "./screens/AdminScreen";
+import TermsScreen from "./screens/TermsScreen";
 import { ThemeProvider } from "./ThemeContext";
 
 const Stack = createNativeStackNavigator();
@@ -58,6 +59,7 @@ export default function App() {
           <Stack.Screen name="StudyPlanner" component={StudyPlannerScreen} />
           <Stack.Screen name="Profile" component={ProfileScreen} />
           <Stack.Screen name="Admin" component={AdminScreen} />
+          <Stack.Screen name="Terms" component={TermsScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </ThemeProvider>

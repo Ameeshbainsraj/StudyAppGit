@@ -21,7 +21,8 @@ import { useTheme } from "../ThemeContext";
 import { saveNote, createNote } from "../notesConfig";
 import { awardXP, XP_REWARDS } from "../xpConfig"; // ← NEW
 
-const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_KEY; // ← NEW
+const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_KEY;
+//const GROQ_API_KEY = "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"; // ← NEW
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "llama-3.3-70b-versatile";
 

@@ -23,8 +23,10 @@ import {
 import { createNote } from "../notesConfig";
 import { awardXP, XP_REWARDS } from "../xpConfig"; // ← NEW
 
-const GROQ_API_KEY = "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";
+const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_KEY;
+//const GROQ_API_KEY = "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";
 const GROQ_WHISPER_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
+const MODEL = "llama-3.3-70b-versatile";
 
 // ── Pulse ring ────────────────────────────────────────────────────────────────
 function PulseRing({ color }) {

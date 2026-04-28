@@ -7,7 +7,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { FIREBASE_AUTH, FIREBASE_DB } from "../FirebaseConfig";
-import { doc, updateDoc, getDoc } from "firebase/firestore";
+import { doc, updateDoc, getDoc, deleteDoc } from "firebase/firestore";
 import { useTheme } from "../ThemeContext";
 import { THEMES } from "../theme";
 import {
@@ -15,20 +15,21 @@ import {
   setShortBreakMinutes, setLongBreakMinutes,
   setStartSound, setBreakEndSound,
 } from "../PomodoroConfig";
-import { loadTranscriptionSettings, setVoice } from "../transcriptionConfig";
+
+const AVAILABLE_THEMES = ["noir", "shepherdBlue", "sageFocus", "wineRed", "phantomPurple"];
 
 export default function SettingsScreen({ navigation }) {
   const { theme, themeKey, changeTheme } = useTheme();
 
   const C = {
-    bg:      theme.colors.background,
-    card:    theme.colors.card,
-    primary: theme.colors.primary,
+    bg:          theme.colors.background,
+    card:        theme.colors.card,
+    primary:     theme.colors.primary,
     primaryText: theme.colors.primaryText,
-    text:    theme.colors.text,
-    muted:   theme.colors.mutedText,
-    input:   theme.colors.inputBackground,
-    danger:  theme.colors.danger,
+    text:        theme.colors.text,
+    muted:       theme.colors.mutedText,
+    input:       theme.colors.inputBackground,
+    danger:      theme.colors.danger,
   };
 
   const [saving, setSaving]               = useState(false);
@@ -36,7 +37,6 @@ export default function SettingsScreen({ navigation }) {
   const [userEmail, setUserEmail]         = useState("");
   const [profileUri, setProfileUri]       = useState(null);
   const [pomoSettings, setPomoSettings]   = useState(null);
-  const [transSettings, setTransSettings] = useState(null);
   const [editingField, setEditingField]   = useState(null);
   const [tempMinutes, setTempMinutes]     = useState("");
   const [showThemePicker, setShowThemePicker] = useState(false);
@@ -51,15 +51,12 @@ export default function SettingsScreen({ navigation }) {
         if (snap.exists()) {
           const data = snap.data();
           if (data.name) setUserName(data.name);
-          // ✅ Read localProfileUri (the field we always write to)
           if (data.localProfileUri) setProfileUri(data.localProfileUri);
           setIsAdmin(data.isAdmin === true);
         }
       }
       const ps = await loadPomodoroSettings();
       setPomoSettings(ps);
-      const ts = await loadTranscriptionSettings();
-      setTransSettings(ts);
     };
     load();
   }, []);
@@ -69,20 +66,25 @@ export default function SettingsScreen({ navigation }) {
       const perm = fromCamera
         ? await ImagePicker.requestCameraPermissionsAsync()
         : await ImagePicker.requestMediaLibraryPermissionsAsync();
+
       if (perm.status !== "granted") {
-        Alert.alert("Permission needed", "Allow access to use this feature.");
+        Alert.alert(
+          fromCamera ? "Camera access denied" : "Gallery access denied",
+          `Please go to your device Settings and allow ${fromCamera ? "camera" : "photo library"} access for Shepard Learn.`
+        );
         return;
       }
+
       const result = fromCamera
         ? await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 })
         : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 });
+
       if (result.canceled) return;
 
       setSaving(true);
       const uri = result.assets[0].uri;
       const user = FIREBASE_AUTH.currentUser;
       if (user) {
-        // ✅ Always write to localProfileUri so all screens read the same field
         await updateDoc(doc(FIREBASE_DB, "users", user.uid), { localProfileUri: uri });
         setProfileUri(uri);
       }
@@ -94,13 +96,28 @@ export default function SettingsScreen({ navigation }) {
     }
   };
 
-  const handleSetProfileImage = () => {
+  const handleSetProfileImage = async () => {
     if (!FIREBASE_AUTH.currentUser) { Alert.alert("Not logged in"); return; }
-    Alert.alert("Profile Picture", "Choose image source", [
-      { text: "Camera",  onPress: () => pickAndSave(true)  },
-      { text: "Gallery", onPress: () => pickAndSave(false) },
-      { text: "Cancel",  style: "cancel"                   },
+
+    const [cameraResult, galleryResult] = await Promise.all([
+      ImagePicker.requestCameraPermissionsAsync(),
+      ImagePicker.requestMediaLibraryPermissionsAsync(),
     ]);
+
+    const cameraOk  = cameraResult.status  === "granted";
+    const galleryOk = galleryResult.status === "granted";
+
+    if (!cameraOk && !galleryOk) {
+      Alert.alert("Permissions required", "Please allow camera and photo library access in your device settings to change your profile picture.");
+      return;
+    }
+
+    const options = [];
+    if (cameraOk)  options.push({ text: "Camera",  onPress: () => pickAndSave(true)  });
+    if (galleryOk) options.push({ text: "Gallery", onPress: () => pickAndSave(false) });
+    options.push({ text: "Cancel", style: "cancel" });
+
+    Alert.alert("Profile Picture", "Choose image source", options);
   };
 
   const openEdit = (field) => {
@@ -125,17 +142,34 @@ export default function SettingsScreen({ navigation }) {
 
   const handleLogout = () => navigation.replace("Login");
 
+  const handleDeleteAccount = async () => {
+    try {
+      const user = FIREBASE_AUTH.currentUser;
+      if (!user) return;
+      await deleteDoc(doc(FIREBASE_DB, "users", user.uid));
+      await user.delete();
+      navigation.replace("Login");
+    } catch (e) {
+      Alert.alert(
+        "Error",
+        "Could not delete account. Please log out and log back in first, then try again."
+      );
+    }
+  };
+
   const initials = userName ? userName.charAt(0).toUpperCase() : "U";
   const currentThemeName = THEMES[themeKey]?.name || themeKey;
+  const isLightTheme = ["shepherdBlue", "sageFocus"].includes(themeKey);
+  const dividerColor = isLightTheme ? "#E2E8F0" : C.input;
 
   const Row = ({ iconName, iconColor, label, value, onPress, chevron = true, last = false }) => (
     <TouchableOpacity
-      style={[s.row, !last && { borderBottomWidth: 1, borderBottomColor: C.input }]}
+      style={[s.row, !last && { borderBottomWidth: 1, borderBottomColor: dividerColor }]}
       onPress={onPress}
       disabled={!onPress}
       activeOpacity={onPress ? 0.7 : 1}
     >
-      <View style={[s.rowIcon, { backgroundColor: iconColor + "25" }]}>
+      <View style={[s.rowIcon, { backgroundColor: iconColor + "20" }]}>
         <Ionicons name={iconName} size={18} color={iconColor} />
       </View>
       <Text style={[s.rowLabel, { color: C.text }]}>{label}</Text>
@@ -165,11 +199,10 @@ export default function SettingsScreen({ navigation }) {
           activeOpacity={0.8}
         >
           <View style={[s.avatar, { backgroundColor: C.primary }]}>
-            {profileUri ? (
-              <Image source={{ uri: profileUri }} style={s.avatarImg} />
-            ) : (
-              <Text style={[s.avatarInitial, { color: C.primaryText }]}>{initials}</Text>
-            )}
+            {profileUri
+              ? <Image source={{ uri: profileUri }} style={s.avatarImg} />
+              : <Text style={[s.avatarInitial, { color: C.primaryText }]}>{initials}</Text>
+            }
           </View>
           <View style={s.profileInfo}>
             <Text style={[s.profileName, { color: C.text }]}>{userName.toUpperCase()}</Text>
@@ -209,6 +242,7 @@ export default function SettingsScreen({ navigation }) {
             label="Theme"
             value={currentThemeName}
             onPress={() => setShowThemePicker(!showThemePicker)}
+            last={!showThemePicker}
           />
           {showThemePicker && (
             <ScrollView
@@ -217,33 +251,30 @@ export default function SettingsScreen({ navigation }) {
               style={{ paddingVertical: 12 }}
               contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
             >
-              {Object.entries(THEMES).map(([id, t]) => (
-                <TouchableOpacity
-                  key={id}
-                  onPress={async () => { await changeTheme(id); setShowThemePicker(false); }}
-                  style={[
-                    s.themeChip,
-                    {
-                      borderColor: themeKey === id ? C.primary : C.input,
-                      backgroundColor: themeKey === id ? C.primary + "20" : C.input,
-                    },
-                  ]}
-                >
-                  <View style={[s.themeChipDot, { backgroundColor: t.colors.primary }]} />
-                  <Text style={[s.themeChipTxt, { color: themeKey === id ? C.primary : C.text }]}>
-                    {t.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {AVAILABLE_THEMES.map((id) => {
+                const t = THEMES[id];
+                if (!t) return null;
+                return (
+                  <TouchableOpacity
+                    key={id}
+                    onPress={async () => { await changeTheme(id); setShowThemePicker(false); }}
+                    style={[
+                      s.themeChip,
+                      {
+                        borderColor:     themeKey === id ? C.primary : dividerColor,
+                        backgroundColor: themeKey === id ? C.primary + "18" : (isLightTheme ? "#F0F4FA" : C.input),
+                      },
+                    ]}
+                  >
+                    <View style={[s.themeChipDot, { backgroundColor: t.colors.primary }]} />
+                    <Text style={[s.themeChipTxt, { color: themeKey === id ? C.primary : C.text }]}>
+                      {t.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
           )}
-          <Row
-            iconName="brush-outline"
-            iconColor={C.primary}
-            label="Custom Theme"
-            onPress={() => Alert.alert("Coming soon", "Custom themes will be available in a future update.")}
-            last
-          />
         </View>
 
         {/* ── STUDY PREFERENCES ── */}
@@ -294,12 +325,12 @@ export default function SettingsScreen({ navigation }) {
             last={!editingField}
           />
           {editingField && (
-            <View style={[s.editBox, { borderColor: C.input }]}>
+            <View style={[s.editBox, { borderColor: dividerColor }]}>
               <Text style={[s.editLabel, { color: C.muted }]}>
                 {editingField === "work" ? "Set work minutes" : editingField === "short" ? "Set break minutes" : "Set long break minutes"}
               </Text>
               <TextInput
-                style={[s.editInput, { backgroundColor: C.input, color: C.text }]}
+                style={[s.editInput, { backgroundColor: C.input, color: C.text, borderWidth: 1, borderColor: dividerColor }]}
                 keyboardType="number-pad"
                 value={tempMinutes}
                 onChangeText={setTempMinutes}
@@ -316,30 +347,6 @@ export default function SettingsScreen({ navigation }) {
               </View>
             </View>
           )}
-        </View>
-
-        {/* ── TRANSCRIPTION ── */}
-        <Section label="TRANSCRIPTION" />
-        <View style={[s.card, { backgroundColor: C.card }]}>
-          {[
-            { id: "voiceA", label: "Calm Voice"   },
-            { id: "voiceB", label: "Bright Voice" },
-            { id: "voiceC", label: "Deep Voice"   },
-          ].map(({ id, label }, i, arr) => (
-            <Row
-              key={id}
-              iconName={transSettings?.voice === id ? "radio-button-on-outline" : "radio-button-off-outline"}
-              iconColor={transSettings?.voice === id ? C.primary : C.muted}
-              label={label}
-              value={transSettings?.voice === id ? "Active" : ""}
-              onPress={async () => {
-                const updated = await setVoice(id);
-                if (updated) setTransSettings(updated);
-              }}
-              chevron={false}
-              last={i === arr.length - 1}
-            />
-          ))}
         </View>
 
         {/* ── ABOUT ── */}
@@ -363,17 +370,47 @@ export default function SettingsScreen({ navigation }) {
             iconColor="#F59E0B"
             label="Rate App"
             onPress={() => Alert.alert("Rate App", "Thanks for using Shepard Learn!")}
+          />
+          <Row
+            iconName="document-text-outline"
+            iconColor={C.muted}
+            label="Terms & Conditions"
+            onPress={() => navigation.navigate("Terms")}
+          />
+          <Row
+            iconName="shield-checkmark-outline"
+            iconColor={C.muted}
+            label="Privacy Policy"
+            onPress={() => navigation.navigate("Terms")}
             last
           />
         </View>
 
         {/* ── LOGOUT ── */}
         <TouchableOpacity
-          style={[s.logoutBtn, { backgroundColor: C.danger + "20", borderColor: C.danger + "50" }]}
+          style={[s.logoutBtn, { backgroundColor: C.danger + "18", borderColor: C.danger + "40" }]}
           onPress={handleLogout}
         >
           <Ionicons name="log-out-outline" size={22} color={C.danger} />
           <Text style={[s.logoutTxt, { color: C.danger }]}>Logout</Text>
+        </TouchableOpacity>
+
+        {/* ── DELETE ACCOUNT (GDPR Article 17) ── */}
+        <TouchableOpacity
+          style={[s.deleteBtn, { backgroundColor: C.danger + "10", borderColor: C.danger + "30" }]}
+          onPress={() =>
+            Alert.alert(
+              "Delete Account",
+              "This will permanently delete your account and all data. This cannot be undone.",
+              [
+                { text: "Cancel", style: "cancel" },
+                { text: "Delete", style: "destructive", onPress: handleDeleteAccount },
+              ]
+            )
+          }
+        >
+          <Ionicons name="trash-outline" size={18} color={C.danger} />
+          <Text style={[s.deleteTxt, { color: C.danger }]}>Delete My Account & Data</Text>
         </TouchableOpacity>
 
       </ScrollView>
@@ -435,7 +472,14 @@ const s = StyleSheet.create({
   logoutBtn: {
     flexDirection: "row", alignItems: "center", justifyContent: "center",
     gap: 10, borderRadius: 20, paddingVertical: 18,
-    marginTop: 4, marginBottom: 20, borderWidth: 1,
+    marginTop: 4, marginBottom: 8, borderWidth: 1,
   },
   logoutTxt: { fontSize: 18, fontWeight: "700" },
+
+  deleteBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 10, borderRadius: 20, paddingVertical: 16,
+    marginTop: 8, marginBottom: 20, borderWidth: 1,
+  },
+  deleteTxt: { fontSize: 15, fontWeight: "700" },
 });

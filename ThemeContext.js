@@ -6,7 +6,7 @@ import { THEMES } from "./theme";
 const ThemeContext = createContext();
 
 export const ThemeProvider = ({ children }) => {
-  const [themeKey, setThemeKey] = useState("icy");
+  const [themeKey, setThemeKey] = useState("shepherdBlue");
 
   useEffect(() => {
     (async () => {

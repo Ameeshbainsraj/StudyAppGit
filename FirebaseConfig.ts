@@ -18,3 +18,4 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const FIREBASE_APP = app;
 export const FIREBASE_AUTH = getAuth(app);   // no initializeAuth, no persistence
 export const FIREBASE_DB = getFirestore(app);
+

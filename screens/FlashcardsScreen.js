@@ -9,7 +9,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useTheme } from "../ThemeContext";
 import { loadDecks, deleteDeck, createDeck, saveDeck } from "../flashcardsConfig";
 
-const GROQ_API_KEY = "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"; // 🔑 your key
+const GROQ_API_KEY = "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"; // 🔑 your key
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "llama-3.3-70b-versatile";
 

@@ -7,235 +7,262 @@ import {
   Text,
   StatusBar,
   Dimensions,
+  Easing,
 } from "react-native";
 import { useTheme } from "../ThemeContext";
 
 const { width, height } = Dimensions.get("window");
-const SMALL_STARS = 8;
-const STAR_SIZE = 40;
-const SMALL_STAR_SIZE = 10;
 
 export default function SplashScreen({ navigation }) {
-  const smallProgress = useRef(new Animated.Value(0)).current;
-  const mainStarOpacity = useRef(new Animated.Value(0)).current;
-  const mainStarScale = useRef(new Animated.Value(0.7)).current;
-
-  const textOpacity = useRef(new Animated.Value(0)).current;
-  const textTranslateY = useRef(new Animated.Value(16)).current;
-  const underlineWidth = useRef(new Animated.Value(0)).current;
-
   const { theme } = useTheme();
+  const primary = theme.colors.primary;
+  const bg = theme.colors.background;
+  const textColor = theme.colors.text;
+
+  // Orb anims
+  const orb1Scale = useRef(new Animated.Value(0)).current;
+  const orb1Opacity = useRef(new Animated.Value(0)).current;
+  const orb2Scale = useRef(new Animated.Value(0)).current;
+  const orb2Opacity = useRef(new Animated.Value(0)).current;
+
+  // Ring anims
+  const ring1Scale = useRef(new Animated.Value(0.4)).current;
+  const ring1Opacity = useRef(new Animated.Value(0)).current;
+  const ring2Scale = useRef(new Animated.Value(0.4)).current;
+  const ring2Opacity = useRef(new Animated.Value(0)).current;
+  const ring3Scale = useRef(new Animated.Value(0.4)).current;
+  const ring3Opacity = useRef(new Animated.Value(0)).current;
+
+  // Center logo
+  const logoScale = useRef(new Animated.Value(0)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const logoRotate = useRef(new Animated.Value(0)).current;
+  const logoPulse = useRef(new Animated.Value(1)).current;
+
+  // Text
+  const titleOpacity = useRef(new Animated.Value(0)).current;
+  const titleY = useRef(new Animated.Value(20)).current;
+  const taglineOpacity = useRef(new Animated.Value(0)).current;
+  const taglineY = useRef(new Animated.Value(14)).current;
+
+  // Sparkles
+  const sparkleAnims = useRef(
+    Array.from({ length: 6 }, () => ({
+      opacity: new Animated.Value(0),
+      scale: new Animated.Value(0),
+      y: new Animated.Value(0),
+    }))
+  ).current;
 
   useEffect(() => {
-    Animated.timing(smallProgress, {
-      toValue: 1,
-      duration: 550,
-      useNativeDriver: true,
-    }).start(() => {
+    // Phase 1: Orbs bloom in
+    Animated.parallel([
+      Animated.timing(orb1Scale, { toValue: 1, duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(orb1Opacity, { toValue: 1, duration: 900, useNativeDriver: true }),
+      Animated.timing(orb2Scale, { toValue: 1, duration: 1100, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(orb2Opacity, { toValue: 1, duration: 1100, useNativeDriver: true }),
+    ]).start();
+
+    // Phase 2: Rings expand sequentially
+    const ringDelay = (anim, scaleAnim, delay) =>
       Animated.sequence([
+        Animated.delay(delay),
         Animated.parallel([
-          Animated.timing(mainStarOpacity, {
-            toValue: 1,
-            duration: 300,
-            useNativeDriver: true,
-          }),
-          Animated.timing(mainStarScale, {
-            toValue: 1,
-            duration: 300,
-            useNativeDriver: true,
-          }),
+          Animated.timing(anim, { toValue: 1, duration: 600, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(scaleAnim, { toValue: 1, duration: 600, easing: Easing.out(Easing.quad), useNativeDriver: true }),
         ]),
-        Animated.sequence([
-          Animated.timing(mainStarScale, {
-            toValue: 1.12,
-            duration: 200,
-            useNativeDriver: true,
-          }),
-          Animated.timing(mainStarScale, {
-            toValue: 1,
-            duration: 200,
-            useNativeDriver: true,
-          }),
-        ]),
-      ]).start();
+      ]);
 
+    Animated.parallel([
+      ringDelay(ring1Opacity, ring1Scale, 200),
+      ringDelay(ring2Opacity, ring2Scale, 380),
+      ringDelay(ring3Opacity, ring3Scale, 540),
+    ]).start();
+
+    // Phase 3: Logo pops in
+    Animated.sequence([
+      Animated.delay(480),
       Animated.parallel([
-        Animated.timing(textOpacity, {
-          toValue: 1,
-          duration: 400,
-          useNativeDriver: true,
-        }),
-        Animated.timing(textTranslateY, {
-          toValue: 0,
-          duration: 400,
-          useNativeDriver: true,
-        }),
-        Animated.timing(underlineWidth, {
-          toValue: 1,
-          duration: 550,
-          useNativeDriver: false,
-        }),
+        Animated.spring(logoScale, { toValue: 1, tension: 80, friction: 7, useNativeDriver: true }),
+        Animated.timing(logoOpacity, { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.timing(logoRotate, { toValue: 1, duration: 700, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]),
+    ]).start(() => {
+      // Pulse loop after appearing
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(logoPulse, { toValue: 1.08, duration: 1000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          Animated.timing(logoPulse, { toValue: 1, duration: 1000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ])
+      ).start();
+    });
+
+    // Phase 4: Text fades in
+    Animated.sequence([
+      Animated.delay(700),
+      Animated.parallel([
+        Animated.timing(titleOpacity, { toValue: 1, duration: 450, useNativeDriver: true }),
+        Animated.timing(titleY, { toValue: 0, duration: 450, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      ]),
+    ]).start();
+
+    Animated.sequence([
+      Animated.delay(900),
+      Animated.parallel([
+        Animated.timing(taglineOpacity, { toValue: 1, duration: 450, useNativeDriver: true }),
+        Animated.timing(taglineY, { toValue: 0, duration: 450, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      ]),
+    ]).start();
+
+    // Phase 5: Sparkles shoot out
+    sparkleAnims.forEach((s, i) => {
+      Animated.sequence([
+        Animated.delay(600 + i * 80),
+        Animated.parallel([
+          Animated.timing(s.opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+          Animated.timing(s.scale, { toValue: 1, duration: 200, useNativeDriver: true }),
+          Animated.timing(s.y, { toValue: -1, duration: 700, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        ]),
+        Animated.timing(s.opacity, { toValue: 0, duration: 300, useNativeDriver: true }),
       ]).start();
     });
 
-    const timer = setTimeout(() => {
-      navigation.replace("Onboarding");
-    }, 2000);
-
+    const timer = setTimeout(() => navigation.replace("Onboarding"), 2600);
     return () => clearTimeout(timer);
-  }, [
-    navigation,
-    smallProgress,
-    mainStarOpacity,
-    mainStarScale,
-    textOpacity,
-    textTranslateY,
-    underlineWidth,
-  ]);
+  }, []);
 
-  const animatedUnderlineWidth = underlineWidth.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0%", "60%"],
-  });
+  const logoSpin = logoRotate.interpolate({ inputRange: [0, 1], outputRange: ["-25deg", "0deg"] });
 
-  const smallStars = Array.from({ length: SMALL_STARS }, (_, i) => {
-    const angle = (2 * Math.PI * i) / SMALL_STARS;
-    const radius = Math.max(width, height) * 0.7;
-
-    const startX = Math.cos(angle) * radius;
-    const startY = Math.sin(angle) * radius;
-
-    const translateX = smallProgress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [startX, 0],
-    });
-
-    const translateY = smallProgress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [startY, 0],
-    });
-
-    return { key: i, translateX, translateY };
-  });
-
-  // derive subtle darker tints from theme colors
-  const bg = theme.colors.background;
-  const primary = theme.colors.primary;
+  // Sparkle positions around center
+  const sparklePositions = [
+    { x: -55, baseY: -55 },
+    { x: 55, baseY: -55 },
+    { x: -70, baseY: 0 },
+    { x: 70, baseY: 0 },
+    { x: -45, baseY: 55 },
+    { x: 45, baseY: 55 },
+  ];
 
   return (
     <View style={[styles.container, { backgroundColor: bg }]}>
       <StatusBar barStyle="light-content" backgroundColor={bg} />
 
-      {/* subtle vignette */}
-      <View style={[styles.vignette, { backgroundColor: "#000000" }]} />
-
-      {/* soft shapes using darker variants of background */}
-      <View
+      {/* Background orbs */}
+      <Animated.View
         style={[
-          styles.bgShapeTop,
-          { backgroundColor: primary, opacity: 0.25 },
+          styles.orb1,
+          {
+            backgroundColor: primary + "30",
+            opacity: orb1Opacity,
+            transform: [{ scale: orb1Scale }],
+          },
         ]}
       />
-      <View
+      <Animated.View
         style={[
-          styles.bgShapeBottom,
-          { backgroundColor: primary, opacity: 0.35 },
+          styles.orb2,
+          {
+            backgroundColor: primary + "1A",
+            opacity: orb2Opacity,
+            transform: [{ scale: orb2Scale }],
+          },
         ]}
       />
 
-      {/* small stars */}
-      {smallStars.map(({ key, translateX, translateY }) => (
-        <Animated.View
-          key={key}
-          style={[
-            styles.smallStar,
-            {
-              backgroundColor: primary,
-              transform: [{ translateX }, { translateY }],
-            },
-          ]}
-        />
-      ))}
+      {/* Center everything */}
+      <View style={styles.center}>
 
-      <View style={styles.centerBlock}>
-        {/* main logo star */}
+        {/* Expanding rings */}
+        {[
+          { opacity: ring1Opacity, scale: ring1Scale, size: 180 },
+          { opacity: ring2Opacity, scale: ring2Scale, size: 130 },
+          { opacity: ring3Opacity, scale: ring3Scale, size: 90 },
+        ].map((r, i) => (
+          <Animated.View
+            key={i}
+            style={[
+              styles.ring,
+              {
+                width: r.size,
+                height: r.size,
+                borderRadius: r.size / 2,
+                borderColor: primary + (i === 0 ? "20" : i === 1 ? "35" : "50"),
+                opacity: r.opacity,
+                transform: [{ scale: r.scale }],
+              },
+            ]}
+          />
+        ))}
+
+        {/* Sparkles */}
+        {sparkleAnims.map((s, i) => {
+          const pos = sparklePositions[i];
+          const translateY = s.y.interpolate({
+            inputRange: [-1, 0],
+            outputRange: [pos.baseY - 30, pos.baseY],
+          });
+          return (
+            <Animated.Text
+              key={i}
+              style={[
+                styles.sparkle,
+                {
+                  color: primary,
+                  opacity: s.opacity,
+                  transform: [
+                    { translateX: pos.x },
+                    { translateY },
+                    { scale: s.scale },
+                  ],
+                },
+              ]}
+            >
+              {i % 2 === 0 ? "✦" : "·"}
+            </Animated.Text>
+          );
+        })}
+
+        {/* Main logo */}
         <Animated.View
           style={[
-            styles.starWrapper,
+            styles.logoWrap,
             {
-              opacity: mainStarOpacity,
-              transform: [{ scale: mainStarScale }],
+              opacity: logoOpacity,
+              transform: [{ scale: logoScale }, { scale: logoPulse }, { rotate: logoSpin }],
             },
           ]}
         >
-          <View
-            style={[
-              styles.starOuter,
-              {
-                backgroundColor: "#00000033",
-                borderColor: theme.colors.primaryText,
-              },
-            ]}
-          >
-            <View
-              style={[
-                styles.starInner,
-                { backgroundColor: primary },
-              ]}
-            />
+          <View style={[styles.logoOuter, { borderColor: primary + "60" }]}>
+            <View style={[styles.logoMid, { borderColor: primary + "99", backgroundColor: primary + "15" }]}>
+              <View style={[styles.logoInner, { backgroundColor: primary }]}>
+                <Text style={styles.logoEmoji}>✦</Text>
+              </View>
+            </View>
           </View>
         </Animated.View>
 
-        {/* text */}
-        <Animated.View
+      </View>
+
+      {/* Text block below */}
+      <View style={styles.textBlock}>
+        <Animated.Text
           style={[
-            styles.textBlock,
-            {
-              opacity: textOpacity,
-              transform: [{ translateY: textTranslateY }],
-            },
+            styles.appName,
+            { color: textColor, opacity: titleOpacity, transform: [{ translateY: titleY }] },
           ]}
         >
-          <Text
-            style={[
-              styles.appName,
-              { color: theme.colors.primaryText },
-            ]}
-          >
-            Shepard{" "}
-            <Text
-              style={[
-                styles.appNameAccent,
-                { color: primary },
-              ]}
-            >
-              Learn
-            </Text>
-          </Text>
+          Shepard{" "}
+          <Text style={[styles.appNameAccent, { color: primary }]}>Learn</Text>
+        </Animated.Text>
 
-          <Animated.View
-            style={[
-              styles.underlineContainer,
-              { width: animatedUnderlineWidth },
-            ]}
-          >
-            <View
-              style={[
-                styles.underline,
-                { backgroundColor: primary },
-              ]}
-            />
-          </Animated.View>
-
-          <Text
-            style={[
-              styles.tagline,
-              { color: theme.colors.primaryText },
-            ]}
-          >
-            Studying made simple
-          </Text>
-        </Animated.View>
+        <Animated.Text
+          style={[
+            styles.tagline,
+            { color: theme.colors.mutedText, opacity: taglineOpacity, transform: [{ translateY: taglineY }] },
+          ]}
+        >
+          studying made simple
+        </Animated.Text>
       </View>
     </View>
   );
@@ -248,55 +275,86 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
-  vignette: {
+  orb1: {
     position: "absolute",
-    width: "150%",
-    height: "150%",
-    opacity: 0.18,
+    width: width * 1.1,
+    height: width * 1.1,
+    borderRadius: width * 0.55,
+    top: -width * 0.35,
+    right: -width * 0.3,
   },
-  bgShapeTop: {
+  orb2: {
     position: "absolute",
-    top: -140,
-    right: -60,
-    width: 360,
-    height: 320,
-    borderRadius: 200,
+    width: width * 0.9,
+    height: width * 0.9,
+    borderRadius: width * 0.45,
+    bottom: -width * 0.3,
+    left: -width * 0.25,
   },
-  bgShapeBottom: {
+  center: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: 200,
+    height: 200,
+  },
+  ring: {
     position: "absolute",
-    bottom: -160,
-    left: -80,
-    width: 380,
-    height: 340,
-    borderRadius: 210,
+    borderWidth: 1,
   },
-
-  centerBlock: { alignItems: "center" },
-  starWrapper: { marginBottom: 18 },
-  starOuter: {
-    width: STAR_SIZE,
-    height: STAR_SIZE,
-    borderRadius: STAR_SIZE / 2,
+  sparkle: {
+    position: "absolute",
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+  logoWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoOuter: {
+    width: 82,
+    height: 82,
+    borderRadius: 41,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  starInner: {
-    width: STAR_SIZE * 0.6,
-    height: STAR_SIZE * 0.6,
-    transform: [{ rotate: "45deg" }],
+  logoMid: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  textBlock: { alignItems: "center" },
-  appName: { fontSize: 26, fontWeight: "700", letterSpacing: 0.8 },
-  appNameAccent: {},
-  underlineContainer: {
-    marginTop: 6,
-    height: 3,
-    borderRadius: 999,
-    overflow: "hidden",
-    backgroundColor: "transparent",
-    alignItems: "flex-start",
+  logoInner: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  underline: { height: "100%", borderRadius: 999 },
-  tagline: { marginTop: 8, fontSize: 13 },
+  logoEmoji: {
+    fontSize: 20,
+    color: "#fff",
+    fontWeight: "bold",
+  },
+  textBlock: {
+    position: "absolute",
+    bottom: height * 0.18,
+    alignItems: "center",
+  },
+  appName: {
+    fontSize: 38,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  appNameAccent: {
+    fontWeight: "800",
+  },
+  tagline: {
+    fontSize: 17,
+    letterSpacing: 1.5,
+    fontWeight: "500",
+  },
 });

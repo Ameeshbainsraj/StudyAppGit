@@ -10,18 +10,27 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Animated,
+  Alert,
+  Linking,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import { Audio } from "expo-av";
 import { useTheme } from "../ThemeContext";
 
-const GROQ_API_KEY = "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"; // 🔑 paste your gsk_... key here
+const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_KEY;
+//const GROQ_API_KEY = "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";
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_WHISPER_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 const MODEL = "llama-3.3-70b-versatile";
+
+// ── Branding ────────────────────────────────────────────────────────────────
+const AI_NAME = "Shepard Learn AI";
 
 export default function AITutorScreen({ navigation, route }) {
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets(); // ← reactive to any phone nav bar height
+  const insets = useSafeAreaInsets();
   const { transcriptionText = "", transcriptionTitle = "Lecture" } = route.params || {};
 
   const C = {
@@ -38,20 +47,128 @@ export default function AITutorScreen({ navigation, route }) {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      content: `Hi! I've read your lecture: "${transcriptionTitle}". Ask me anything about it — I can explain concepts, quiz you, summarise it, or enhance your notes.`,
+      content: `Hi! I'm ${AI_NAME}. I've read your lecture: "${transcriptionTitle}". Ask me anything — type or tap the mic to speak.`,
     },
   ]);
-  const [input, setInput]     = useState("");
-  const [loading, setLoading] = useState(false);
-  const scrollRef = useRef(null);
+  const [input, setInput]             = useState("");
+  const [loading, setLoading]         = useState(false);
+  const [recording, setRecording]     = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+
+  const scrollRef    = useRef(null);
+  const pulseAnim    = useRef(new Animated.Value(1)).current;
+  const pulseOpacity = useRef(new Animated.Value(0)).current;
+  const inputRef     = useRef(null);
 
   useEffect(() => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
   }, [messages, loading]);
 
+  // Pulse animation when recording
+  useEffect(() => {
+    if (isRecording) {
+      pulseOpacity.setValue(1);
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1.6, duration: 700, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1,   duration: 700, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.stopAnimation();
+      pulseAnim.setValue(1);
+      Animated.timing(pulseOpacity, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+    }
+  }, [isRecording]);
+
+  // ── Voice recording ────────────────────────────────────────────────────────
+  const startRecording = async () => {
+    try {
+      const { status, canAskAgain } = await Audio.requestPermissionsAsync();
+
+      if (status === "granted") {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          playsInSilentModeIOS: true,
+        });
+        const { recording: rec } = await Audio.Recording.createAsync(
+          Audio.RecordingOptionsPresets.HIGH_QUALITY
+        );
+        setRecording(rec);
+        setIsRecording(true);
+
+      } else if (!canAskAgain) {
+        // Permission permanently denied — open device Settings
+        Alert.alert(
+          "Microphone Access Required",
+          `${AI_NAME} needs microphone access to record your voice. Please enable it in your device Settings.`,
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => Linking.openSettings() },
+          ]
+        );
+
+      } else {
+        // Denied but can still ask again
+        Alert.alert(
+          "Microphone Permission Denied",
+          "Microphone access is needed to record your voice. Please allow it when prompted.",
+          [{ text: "OK" }]
+        );
+      }
+    } catch (err) {
+      console.error("Start recording error:", err);
+    }
+  };
+
+  const stopRecording = async () => {
+    if (!recording) return;
+    try {
+      setIsRecording(false);
+      setTranscribing(true);
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      setRecording(null);
+
+      // Send to Groq Whisper
+      const formData = new FormData();
+      formData.append("file", { uri, type: "audio/m4a", name: "voice.m4a" });
+      formData.append("model", "whisper-large-v3");
+      formData.append("language", "en");
+
+      const res = await fetch(GROQ_WHISPER_URL, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${GROQ_API_KEY}` },
+        body: formData,
+      });
+
+      const data = await res.json();
+      const transcribed = data?.text?.trim();
+
+      if (transcribed) {
+        setInput(transcribed);
+        // Auto-send after a brief moment so user sees what was heard
+        setTimeout(() => sendMessage(transcribed), 400);
+      } else {
+        Alert.alert("Not Understood", "Couldn't understand the audio. Please try again.");
+      }
+    } catch (err) {
+      console.error("Stop recording error:", err);
+      Alert.alert("Transcription Failed", "Voice transcription failed. Please try again.");
+    } finally {
+      setTranscribing(false);
+    }
+  };
+
+  const handleMicPress = () => {
+    if (isRecording) stopRecording();
+    else startRecording();
+  };
+
   // ── Send message ───────────────────────────────────────────────────────────
   const sendMessage = async (userMessage) => {
-    const msg = userMessage.trim();
+    const msg = (userMessage ?? input).trim();
     if (!msg || loading) return;
 
     const updatedMessages = [...messages, { role: "user", content: msg }];
@@ -67,13 +184,14 @@ export default function AITutorScreen({ navigation, route }) {
         messages: [
           {
             role: "system",
-            content: `You are a helpful AI study tutor. The student has provided the following lecture transcription:
+            content: `You are ${AI_NAME}, a helpful AI study tutor. The student has provided the following lecture transcription:
 
 ---
-${transcriptionText ? transcriptionText : "No transcription was provided."}
+${transcriptionText || "No transcription was provided."}
 ---
 
 Your rules:
+- Always refer to yourself as "${AI_NAME}" if asked who you are
 - Answer questions based on the lecture content above
 - If asked to summarise, give clear bullet points
 - If asked for quiz questions, generate them from the lecture
@@ -81,10 +199,7 @@ Your rules:
 - If the topic is not in the lecture, say so and answer from general knowledge
 - Keep answers clear and concise`,
           },
-          ...updatedMessages.slice(-8).map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
+          ...updatedMessages.slice(-8).map((m) => ({ role: m.role, content: m.content })),
         ],
       };
 
@@ -98,40 +213,30 @@ Your rules:
       });
 
       const rawText = await response.text();
-
       if (!response.ok) {
-        console.error("Groq chat error status:", response.status);
-        console.error("Groq chat error body:", rawText);
-        let errorMsg = "Something went wrong. Please try again.";
-        if (response.status === 401) errorMsg = "Invalid API key. Check your GROQ_API_KEY.";
-        if (response.status === 429) errorMsg = "Rate limit hit. Wait a moment and try again.";
-        if (response.status === 400) errorMsg = "Bad request — the message may be too long.";
-        setMessages((prev) => [...prev, { role: "assistant", content: `⚠️ Error ${response.status}: ${errorMsg}` }]);
+        let errorMsg = "Something went wrong.";
+        if (response.status === 401) errorMsg = "Invalid API key.";
+        if (response.status === 429) errorMsg = "Rate limit hit. Wait a moment.";
+        setMessages((prev) => [...prev, { role: "assistant", content: `⚠️ ${errorMsg}` }]);
         return;
       }
 
       const data = JSON.parse(rawText);
       const reply = data?.choices?.[0]?.message?.content?.trim();
-
-      if (!reply) {
-        setMessages((prev) => [...prev, { role: "assistant", content: "I didn't get a response. Please try again." }]);
-        return;
-      }
-
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
-
-    } catch (err) {
-      console.error("AI Tutor fetch error:", err);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: `⚠️ Network error: ${err.message}. Check your internet connection.` },
+        { role: "assistant", content: reply || "No response. Try again." },
+      ]);
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: `⚠️ Network error: ${err.message}` },
       ]);
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Quick actions ──────────────────────────────────────────────────────────
   const quickActions = [
     { label: "📝 Summarise",     prompt: "Summarise the key points from this lecture in bullet points" },
     { label: "❓ Quiz me",        prompt: "Give me 5 quiz questions based on this lecture" },
@@ -139,7 +244,6 @@ Your rules:
     { label: "✨ Enhance notes", prompt: "Rewrite these lecture notes as structured, detailed study notes with headings and key points" },
   ];
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={[s.safeArea, { backgroundColor: C.bg }]} edges={["top"]}>
       <KeyboardAvoidingView
@@ -148,29 +252,31 @@ Your rules:
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
       >
 
-        {/* ── Top Bar ────────────────────────────────────────────────────── */}
+        {/* ── Top Bar ── */}
         <View style={s.topBar}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={28} color={C.text} />
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={[s.iconBtn, { backgroundColor: C.card }]}
+          >
+            <Ionicons name="arrow-back" size={20} color={C.text} />
           </TouchableOpacity>
-          <View style={s.titleWrap}>
-            <MaterialIcons name="psychology" size={20} color={C.primary} />
-            <Text style={[s.titleText, { color: C.text }]}>AI TUTOR</Text>
+
+          <View style={s.titleBlock}>
+            <View style={[s.titleIconWrap, { backgroundColor: C.primary + "22" }]}>
+              <MaterialIcons name="psychology" size={18} color={C.primary} />
+            </View>
+            <View>
+              <Text style={[s.titleText, { color: C.text }]}>{AI_NAME}</Text>
+              <Text style={[s.titleSub, { color: C.muted }]} numberOfLines={1}>
+                {transcriptionText ? transcriptionTitle : "No transcript"}
+              </Text>
+            </View>
           </View>
-          <View style={{ width: 28 }} />
+
+          <View style={[s.statusDot, { backgroundColor: loading ? "#F59E0B" : "#10B981" }]} />
         </View>
 
-        {/* ── Context pill ───────────────────────────────────────────────── */}
-        <View style={[s.contextPill, { backgroundColor: C.card }]}>
-          <MaterialIcons name="description" size={14} color={C.primary} />
-          <Text style={[s.contextText, { color: C.muted }]} numberOfLines={1}>
-            {transcriptionText
-              ? `Context: ${transcriptionTitle}`
-              : "⚠️ No transcript loaded — open from Transcription screen"}
-          </Text>
-        </View>
-
-        {/* ── Quick action chips ──────────────────────────────────────────── */}
+        {/* ── Quick actions ── */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -180,7 +286,7 @@ Your rules:
           {quickActions.map((action, i) => (
             <TouchableOpacity
               key={i}
-              style={[s.quickBtn, { backgroundColor: C.card, borderColor: C.primary + "50" }]}
+              style={[s.quickBtn, { backgroundColor: C.card, borderColor: C.primary + "40" }]}
               onPress={() => sendMessage(action.prompt)}
               disabled={loading}
             >
@@ -189,31 +295,30 @@ Your rules:
           ))}
         </ScrollView>
 
-        {/* ── Message list ───────────────────────────────────────────────── */}
+        {/* ── Messages ── */}
         <ScrollView
           ref={scrollRef}
           style={s.messageList}
-          contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 24 }}
+          contentContainerStyle={{ padding: 16, gap: 12, paddingBottom: 24 }}
           showsVerticalScrollIndicator={false}
         >
           {messages.map((msg, i) => {
             const isUser = msg.role === "user";
             return (
-              <View
-                key={i}
-                style={[
-                  s.bubble,
-                  isUser
-                    ? [s.userBubble, { backgroundColor: C.primary }]
-                    : [s.aiBubble, { backgroundColor: C.card }],
-                ]}
-              >
+              <View key={i} style={[s.msgRow, isUser && s.msgRowUser]}>
                 {!isUser && (
                   <View style={[s.aiAvatar, { backgroundColor: C.primary }]}>
-                    <Text style={{ color: C.primaryText, fontSize: 10, fontWeight: "bold" }}>AI</Text>
+                    <MaterialIcons name="psychology" size={14} color={C.primaryText} />
                   </View>
                 )}
-                <View style={s.bubbleContent}>
+                <View
+                  style={[
+                    s.bubble,
+                    isUser
+                      ? { backgroundColor: C.primary,   borderBottomRightRadius: 4 }
+                      : { backgroundColor: C.card,      borderBottomLeftRadius: 4 },
+                  ]}
+                >
                   <Text style={[s.bubbleText, { color: isUser ? C.primaryText : C.text }]}>
                     {msg.content}
                   </Text>
@@ -223,39 +328,90 @@ Your rules:
           })}
 
           {loading && (
-            <View style={[s.bubble, s.aiBubble, { backgroundColor: C.card }]}>
+            <View style={s.msgRow}>
               <View style={[s.aiAvatar, { backgroundColor: C.primary }]}>
-                <Text style={{ color: C.primaryText, fontSize: 10, fontWeight: "bold" }}>AI</Text>
+                <MaterialIcons name="psychology" size={14} color={C.primaryText} />
               </View>
-              <View style={s.typingDots}>
-                <ActivityIndicator color={C.primary} size="small" />
-                <Text style={[s.typingText, { color: C.muted }]}>Thinking...</Text>
+              <View style={[s.bubble, { backgroundColor: C.card, borderBottomLeftRadius: 4 }]}>
+                <View style={s.typingRow}>
+                  <ActivityIndicator color={C.primary} size="small" />
+                  <Text style={[s.typingText, { color: C.muted }]}>Thinking...</Text>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {transcribing && (
+            <View style={s.msgRow}>
+              <View style={[s.aiAvatar, { backgroundColor: C.primary + "66" }]}>
+                <Ionicons name="mic" size={14} color={C.primaryText} />
+              </View>
+              <View style={[s.bubble, { backgroundColor: C.card, borderBottomLeftRadius: 4 }]}>
+                <View style={s.typingRow}>
+                  <ActivityIndicator color={C.primary} size="small" />
+                  <Text style={[s.typingText, { color: C.muted }]}>Transcribing your voice...</Text>
+                </View>
               </View>
             </View>
           )}
         </ScrollView>
 
-        {/* ── Input bar — dynamically clears phone nav buttons ───────────── */}
+        {/* ── Input bar ── */}
         <View
           style={[
             s.inputBar,
             {
               backgroundColor: C.card,
               borderTopColor: C.input,
-              // Math.max ensures minimum padding even on devices with no nav bar
               paddingBottom: Math.max(insets.bottom + 8, 16),
             },
           ]}
         >
+          {/* Mic button with pulse ring */}
+          <View style={s.micWrap}>
+            <Animated.View
+              style={[
+                s.micPulse,
+                {
+                  borderColor: C.primary,
+                  opacity: pulseOpacity,
+                  transform: [{ scale: pulseAnim }],
+                },
+              ]}
+            />
+            <TouchableOpacity
+              style={[
+                s.micBtn,
+                {
+                  backgroundColor: isRecording ? C.danger : C.primary + "22",
+                  borderColor:     isRecording ? C.danger : C.primary,
+                },
+              ]}
+              onPress={handleMicPress}
+              disabled={transcribing || loading}
+            >
+              <Ionicons
+                name={isRecording ? "stop" : "mic"}
+                size={20}
+                color={isRecording ? "#fff" : C.primary}
+              />
+            </TouchableOpacity>
+          </View>
+
+          {/* Text input */}
           <TextInput
-            style={[s.textInput, { color: C.text, backgroundColor: C.bg }]}
-            placeholder="Ask anything about your lecture..."
+            ref={inputRef}
+            style={[s.textInput, { color: C.text, backgroundColor: C.input }]}
+            placeholder={isRecording ? "Listening..." : "Ask anything..."}
             placeholderTextColor={C.muted}
             value={input}
             onChangeText={setInput}
             multiline
             maxLength={500}
+            editable={!isRecording}
           />
+
+          {/* Send button */}
           <TouchableOpacity
             style={[
               s.sendBtn,
@@ -264,43 +420,55 @@ Your rules:
             onPress={() => sendMessage(input)}
             disabled={!input.trim() || loading}
           >
-            <Ionicons name="send" size={18} color={C.primaryText} />
+            <Ionicons
+              name="arrow-up"
+              size={20}
+              color={input.trim() && !loading ? C.primaryText : C.muted}
+            />
           </TouchableOpacity>
         </View>
+
+        {/* Recording status bar */}
+        {isRecording && (
+          <View
+            style={[
+              s.recordingBar,
+              { backgroundColor: C.danger + "18", borderColor: C.danger + "40" },
+            ]}
+          >
+            <Animated.View
+              style={[s.recDot, { backgroundColor: C.danger, transform: [{ scale: pulseAnim }] }]}
+            />
+            <Text style={[s.recText, { color: C.danger }]}>Recording — tap stop when done</Text>
+          </View>
+        )}
 
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
   safeArea: { flex: 1 },
   flex:     { flex: 1 },
 
   topBar: {
-    width: "90%",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 16,
-    marginBottom: 10,
-    alignSelf: "center",
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 16, paddingVertical: 12,
+    gap: 12,
   },
-  titleWrap: { flexDirection: "row", alignItems: "center", gap: 8 },
-  titleText: { fontWeight: "700", fontSize: 16, letterSpacing: 2 },
-
-  contextPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginHorizontal: 16,
-    marginBottom: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+  iconBtn: {
+    width: 38, height: 38, borderRadius: 12,
+    justifyContent: "center", alignItems: "center",
   },
-  contextText: { fontSize: 12, flex: 1 },
+  titleBlock: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
+  titleIconWrap: {
+    width: 36, height: 36, borderRadius: 10,
+    justifyContent: "center", alignItems: "center",
+  },
+  titleText: { fontSize: 16, fontWeight: "800" },
+  titleSub:  { fontSize: 11, marginTop: 1, maxWidth: 180 },
+  statusDot: { width: 9, height: 9, borderRadius: 5 },
 
   quickRow: { maxHeight: 46, marginBottom: 4 },
   quickBtn: {
@@ -311,52 +479,55 @@ const s = StyleSheet.create({
 
   messageList: { flex: 1 },
 
-  bubble: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    maxWidth: "85%",
-    marginBottom: 8,
-  },
-  userBubble: {
-    alignSelf: "flex-end",
-    borderRadius: 18, borderBottomRightRadius: 4,
-    padding: 12,
-  },
-  aiBubble: {
-    alignSelf: "flex-start",
-    borderRadius: 18, borderBottomLeftRadius: 4,
-    padding: 12,
-  },
-  aiAvatar: {
-    width: 26, height: 26, borderRadius: 13,
-    justifyContent: "center", alignItems: "center",
-    marginRight: 8, marginTop: 2,
-  },
-  bubbleContent: { flex: 1 },
-  bubbleText:    { fontSize: 14, lineHeight: 21 },
-  typingDots:    { flexDirection: "row", alignItems: "center", gap: 8 },
-  typingText:    { fontSize: 13 },
+  msgRow:     { flexDirection: "row", alignItems: "flex-end", gap: 8, marginBottom: 4 },
+  msgRowUser: { flexDirection: "row-reverse" },
 
-  inputBar: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    gap: 10,
-    borderTopWidth: 1,
-    // paddingBottom is set dynamically using insets.bottom in the JSX
-  },
-  textInput: {
-    flex: 1,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 14,
-    maxHeight: 100,
-  },
-  sendBtn: {
-    width: 44, height: 44, borderRadius: 22,
+  aiAvatar: {
+    width: 28, height: 28, borderRadius: 14,
     justifyContent: "center", alignItems: "center",
     marginBottom: 2,
   },
+  bubble: {
+    maxWidth: "78%", borderRadius: 18,
+    paddingHorizontal: 14, paddingVertical: 10,
+  },
+  bubbleText: { fontSize: 14, lineHeight: 21 },
+  typingRow:  { flexDirection: "row", alignItems: "center", gap: 8 },
+  typingText: { fontSize: 13 },
+
+  inputBar: {
+    flexDirection: "row", alignItems: "flex-end",
+    paddingHorizontal: 12, paddingTop: 10, gap: 8,
+    borderTopWidth: 1,
+  },
+
+  micWrap: { justifyContent: "center", alignItems: "center", width: 46, height: 46 },
+  micPulse: {
+    position: "absolute", width: 46, height: 46,
+    borderRadius: 23, borderWidth: 2,
+  },
+  micBtn: {
+    width: 42, height: 42, borderRadius: 21,
+    justifyContent: "center", alignItems: "center", borderWidth: 1.5,
+  },
+
+  textInput: {
+    flex: 1, borderRadius: 20,
+    paddingHorizontal: 14, paddingVertical: 10,
+    fontSize: 14, maxHeight: 100,
+  },
+  sendBtn: {
+    width: 42, height: 42, borderRadius: 21,
+    justifyContent: "center", alignItems: "center",
+    marginBottom: 2,
+  },
+
+  recordingBar: {
+    position: "absolute", bottom: 90, left: 16, right: 16,
+    flexDirection: "row", alignItems: "center", gap: 8,
+    borderRadius: 14, borderWidth: 1,
+    paddingHorizontal: 14, paddingVertical: 10,
+  },
+  recDot:  { width: 8, height: 8, borderRadius: 4 },
+  recText: { fontSize: 13, fontWeight: "600" },
 });
