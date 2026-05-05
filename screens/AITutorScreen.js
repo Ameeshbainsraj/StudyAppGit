@@ -19,8 +19,8 @@ import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { Audio } from "expo-av";
 import { useTheme } from "../ThemeContext";
 
-const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_KEY;
-
+//const GROQ_API_KEY = process.env.EXPO_PUBLIC_GROQ_KEY;
+const GROQ_API_KEY = "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";          //<<==== insert fresh groq key here
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_WHISPER_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 const MODEL = "llama-3.3-70b-versatile";
